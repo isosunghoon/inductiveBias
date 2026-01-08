@@ -4,7 +4,7 @@ import pandas as pd
 from torchvision import transforms
 import timm
 from timm.layers import set_fused_attn
-from visualization_attention import visualize_attention 
+from vit_baseline.visualization_attention import visualize_attention 
 from config import * 
 
 # 1. 환경 설정 및 데이터 로드
@@ -30,7 +30,7 @@ model = get_model()
 transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
 ])
 
 # 4. 데이터 시각화 실행 

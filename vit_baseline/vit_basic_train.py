@@ -44,7 +44,7 @@ class PolygonDataset(Dataset):
 transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
 ])
 
 # 3. 모델 준비 (ViT-Tiny)
@@ -77,6 +77,7 @@ criterion = nn.MSELoss()
 optimizer = optim.AdamW(model.parameters(), lr=LR)
 
 train_losses = [] # 그래프를 그리기 위한 Loss 기록용 리스트
+test_losses = [] # 그래프를 그리기 위한 Test Loss 기록용 리스트
 
 print(f"학습 시작 (Device: {device})...")
 
@@ -98,12 +99,29 @@ for epoch in range(EPOCHS):
 
         running_loss += loss.item()
 
-        # [수정 1] 진행바 옆에 현재 Loss 표시
+        # 진행바 옆에 현재 Loss 표시
         pbar.set_postfix(loss=f"{loss.item():.4f}")
-
+    
     # 에포크별 평균 Loss 저장
-    epoch_avg_loss = running_loss / len(train_loader)
-    train_losses.append(epoch_avg_loss)
+    epoch_train_loss = running_loss / len(train_loader)
+    train_losses.append(epoch_train_loss)
+    
+    # Validation (Test) Loop
+    model.eval() # 평가 모드로 전환 (Dropout, BatchNorm 등 고정)
+    running_test_loss = 0.0
+    
+    with torch.no_grad(): # 기울기 계산 끔 (메모리 절약, 속도 향상)
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images).squeeze()
+            loss = criterion(outputs, labels)
+            running_test_loss += loss.item()
+    
+    epoch_test_loss = running_test_loss / len(test_loader)
+    test_losses.append(epoch_test_loss)
+
+    # Epoch 결과 출력
+    print(f"Epoch [{epoch+1}/{EPOCHS}] Train Loss: {epoch_train_loss:.4f} | Test Loss: {epoch_test_loss:.4f}")
 
 # 학습 종료 후 Loss 그래프 그리기
 plt.figure(figsize=(10, 5))
