@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
+from torch.optim.lr_scheduler import OneCycleLR
 from torchvision import transforms
 import timm
 import pandas as pd
@@ -16,7 +17,7 @@ from config import *
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 IMG_SIZE = 224
 BATCH_SIZE = 128
-EPOCHS = 30  
+EPOCHS = 15
 LR = 2e-4
 
 # 2. 커스텀 데이터셋 정의 (기존과 동일)
@@ -74,7 +75,16 @@ train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True, num_w
 test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, num_workers = 2, pin_memory = True) # Test용 로더
 
 criterion = nn.MSELoss()
-optimizer = optim.AdamW(model.parameters(), lr=LR)
+optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.05)
+
+scheduler = OneCycleLR(
+    optimizer,
+    max_lr=LR,
+    epochs=EPOCHS,
+    steps_per_epoch=len(train_loader),
+    pct_start=0.1,
+    anneal_strategy='cos'
+)
 
 train_losses = [] # 그래프를 그리기 위한 Loss 기록용 리스트
 test_losses = [] # 그래프를 그리기 위한 Test Loss 기록용 리스트
