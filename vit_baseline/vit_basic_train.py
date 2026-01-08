@@ -106,11 +106,12 @@ for epoch in range(EPOCHS):
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         running_loss += loss.item()
 
-        # 진행바 옆에 현재 Loss 표시
-        pbar.set_postfix(loss=f"{loss.item():.4f}")
+        current_lr = scheduler.get_last_lr()[0]
+        pbar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{current_lr:.6f}")
     
     # 에포크별 평균 Loss 저장
     epoch_train_loss = running_loss / len(train_loader)
