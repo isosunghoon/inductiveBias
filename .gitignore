@@ -2,3 +2,4 @@ dataset/
 .vscode/
 ckpt/
 !ckpt/.gitkeep
+__pycache__/

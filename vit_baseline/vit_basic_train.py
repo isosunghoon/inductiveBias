@@ -62,8 +62,7 @@ if not os.path.exists(LABEL_FILE):
     exit()
 
 # 전체 데이터셋 로드
-# full_dataset = PolygonDataset(LABEL_FILE, DATA_DIR, transform=transform)
-full_dataset = PolygonDataset("/content/labels.csv", "/content/images", transform=transform)
+full_dataset = PolygonDataset(LABEL_FILE, DATA_DIR, transform=transform)
 
 train_size = int(0.8 * len(full_dataset))
 test_size = len(full_dataset) - train_size

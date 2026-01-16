@@ -16,12 +16,23 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 IMG_SIZE = 224
 use_thresholding = False
 
-# 데이터 변환
-transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-])
+def get_vit_explainability_model():
+    # 데이터 변환
+    transform = transforms.Compose([
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+    ])
+
+    # initialize ViT pretrained
+    model = vit_LRP(pretrained=True).to(device)
+    model.load_state_dict(torch.load(CKPT_DIR / 'vit_polygon_model.pth', map_location=device))
+    model.eval()
+
+    return model, transform 
+
+model, transform = get_vit_explainability_model()
+attribution_generator = LRP(model)
 
 # create heatmap from mask on image
 def show_cam_on_image(img, mask):
@@ -30,12 +41,6 @@ def show_cam_on_image(img, mask):
     cam = heatmap + np.float32(img)
     cam = cam / np.max(cam)
     return cam
-
-# initialize ViT pretrained
-model = vit_LRP(pretrained=True).to(device)
-model.load_state_dict(torch.load(CKPT_DIR / 'vit_polygon_model.pth'))
-model.eval()
-attribution_generator = LRP(model)
 
 def generate_visualization(original_image, device, class_index=None):
     transformer_attribution = attribution_generator.generate_LRP(original_image.unsqueeze(0).to(device), method="transformer_attribution", index=class_index).detach()
