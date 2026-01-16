@@ -2,10 +2,29 @@ import torch
 import cv2 
 from PIL import Image
 import matplotlib.pyplot as plt
+from torchvision import transforms
+import timm
+import torch.nn as nn
+from timm.layers import set_fused_attn
+from config import *
 # Attention Map을 가로채기 위한 Hook 설정
 DEPTH = 12 # ViT-Tiny의 Block 수
 IMG_SIZE = 224 # ViT에서 다루는 이미지 크기
 attention_weights = None
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+set_fused_attn(False)
+
+def get_vit_basic_model():
+    transform = transforms.Compose([
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+    ])
+    model = timm.create_model('vit_tiny_patch16_224', pretrained=True)
+    model.head = nn.Linear(model.head.in_features, 1)
+    model.load_state_dict(torch.load(CKPT_DIR / 'vit_polygon_model.pth', map_location=device))
+    return model.to(device), transform
 
 def hook_fn(module, input, output):
     global attention_weights

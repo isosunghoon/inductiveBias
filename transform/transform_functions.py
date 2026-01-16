@@ -58,6 +58,67 @@ def extract_rotated(image_path):
     
     return saved_path
 
+def extract_noise(image_path, noise_ratio = 0.02):
+    image_path = str(image_path)
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+    # 이미지가 이미 0과 255로 구성되어 있다고 가정
+    noisy_img = img.copy()
+    
+    # 무작위 행렬 생성 (0~1 사이)
+    random_matrix = np.random.random(img.shape)
+    
+    noisy_img[random_matrix < noise_ratio] = 255 - noisy_img[random_matrix < noise_ratio]
+    
+    name = f"noise_{noise_ratio:.2f}"
+    saved_path = TRANSFORM_DATA_DIR / (image_path.split("/")[-1].split(".")[0] + "_" + name + ".png")
+    cv2.imwrite(saved_path, noisy_img)
+    
+    return saved_path 
+
+def extract_noise_internal(image_path, noise_ratio = 0.05):
+    image_path = str(image_path)
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+    # 1. 하얀색(255) 픽셀의 좌표를 모두 찾음
+    white_pixels = np.argwhere(img == 255)
+    num_white = len(white_pixels)
+    
+    # 2. 노이즈를 넣을 픽셀 개수 계산 (하얀색 면적 대비)
+    num_noise = int(num_white * noise_ratio)
+    
+    # 3. 하얀색 픽셀 인덱스 중 무작위로 num_noise개 선택
+    noise_indices = np.random.choice(num_white, num_noise, replace=False)
+        
+    # 4. 선택된 좌표의 값을 0(검은색)으로 변경
+    for idx in noise_indices:
+        y, x = white_pixels[idx]
+        img[y, x] = 0
+    
+    name = f"noise_internal_{noise_ratio:.2f}"
+    saved_path = TRANSFORM_DATA_DIR / (image_path.split("/")[-1].split(".")[0] + "_" + name + ".png")
+    cv2.imwrite(saved_path, img)
+    
+    return saved_path
+
+def extract_blurred(image_path, ksize=5):
+    """
+    이미지에 가우시안 블러를 적용하여 경계를 흐릿하게 만듭니다.
+    - ksize: 커널 크기 (홀수여야 함. 숫자가 클수록 더 많이 흐려짐)
+    """
+    image_path = str(image_path)
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+    # 가우시안 블러 적용
+    blurred_img = cv2.GaussianBlur(img, (ksize, ksize), 0)
+
+    # 저장 경로 생성
+    name = f"blurred_k{ksize}"
+    saved_path = TRANSFORM_DATA_DIR / (image_path.split("/")[-1].split(".")[0] + "_" + name + ".png")
+    cv2.imwrite(saved_path, blurred_img)
+    
+    return saved_path
+
 def make_circle(ratio):
     """
     이미지 한 변(112px) 대비 직경 비율을 입력받아 원을 생성합니다.
@@ -106,13 +167,16 @@ functions_dict = {
     "inverted": extract_inverted,
     "rotated": extract_rotated,
     "circle": make_circle,
+    "noise": extract_noise,
+    "noise_internal": extract_noise_internal,
+    "blurred": extract_blurred,
 }
 
 if __name__ == "__main__":
     # 실행 및 시각화
     image_path = "dataset/images/1.png"  # 파일 경로를 입력하세요
-    # transformed_path = functions_dict["rotated"](image_path)
-    transformed_path, diameter = functions_dict["circle"](0.5)
+    transformed_path = functions_dict["noise_internal"](image_path)
+    # transformed_path, diameter = functions_dict["circle"](0.5)
 
     # 결과 확인
     plt.figure(figsize=(10, 5))
