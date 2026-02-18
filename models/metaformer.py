@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-MetaFormer implementation with hybrid stages
+MetaFormer implementation with single-stage ViT-like structure
 """
 from typing import Sequence
-from functools import partial, reduce
 import torch
 import torch.nn as nn
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import DropPath, trunc_normal_
-from timm.models.registry import register_model
 from timm.layers import to_2tuple
 
 # try:
@@ -43,8 +41,6 @@ from timm.layers import to_2tuple
 #     has_mmdet = False
 
 
-
-
 def _cfg(url='', **kwargs):
     return {
         'url': url,
@@ -61,14 +57,13 @@ class PatchEmbed(nn.Module):
     Input: tensor in shape [B, C, H, W]
     Output: tensor in shape [B, C, H/stride, W/stride]
     """
-    def __init__(self, patch_size=16, stride=16, padding=0, 
+    def __init__(self, patch_size=16,
                  in_chans=3, embed_dim=768, norm_layer=None):
         super().__init__()
         patch_size = to_2tuple(patch_size)
-        stride = to_2tuple(stride)
-        padding = to_2tuple(padding)
+
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, 
-                              stride=stride, padding=padding)
+                              stride=patch_size)
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
     def forward(self, x):
@@ -155,85 +150,6 @@ class AddPositionEmb(nn.Module):
         return x+self.pos_embed
 
 
-class Pooling(nn.Module):
-    """
-    Implementation of pooling for PoolFormer
-    --pool_size: pooling size
-    """
-    def __init__(self, pool_size=3, **kwargs):
-        super().__init__()
-        self.pool = nn.AvgPool2d(
-            pool_size, stride=1, padding=pool_size//2, count_include_pad=False)
-
-    def forward(self, x):
-        return self.pool(x) - x
-
-
-class Attention(nn.Module):
-    """Attention module that can take tensor with [B, N, C] or [B, C, H, W] as input.
-    Modified from: 
-    https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
-    """
-    def __init__(self, dim, head_dim=32, qkv_bias=False, attn_drop=0., proj_drop=0.):
-        super().__init__()
-        assert dim % head_dim == 0, 'dim should be divisible by head_dim'
-        self.head_dim = head_dim
-        self.num_heads = dim // head_dim
-        self.scale = head_dim ** -0.5
-
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-    def forward(self, x):
-        shape = x.shape
-        if len(shape) == 4:
-            B, C, H, W = shape
-            N = H * W
-            x = torch.flatten(x, start_dim=2).transpose(-2, -1) # (B, N, C)
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
-
-        # trick here to make q@k.t more stable
-        attn = (q * self.scale) @ k.transpose(-2, -1)
-        # attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        if len(shape) == 4:
-            x = x.transpose(-2, -1).reshape(B, C, H, W)
-
-        return x
-
-
-class SpatialFc(nn.Module):
-    """SpatialFc module that take features with shape of (B,C,*) as input.
-    """
-    def __init__(
-        self, spatial_shape=[14, 14], **kwargs, 
-        ):
-        super().__init__()
-        if isinstance(spatial_shape, int):
-            spatial_shape = [spatial_shape]
-        assert isinstance(spatial_shape, Sequence), \
-            f'"spatial_shape" must by a sequence or int, ' \
-            f'get {type(spatial_shape)} instead.'
-        N = reduce(lambda x, y: x * y, spatial_shape)
-        self.fc = nn.Linear(N, N, bias=False)
-
-    def forward(self, x):
-        # input shape like [B, C, H, W]
-        shape = x.shape
-        x = torch.flatten(x, start_dim=2) # [B, C, H*W]
-        x = self.fc(x) # [B, C, H*W]
-        x = x.reshape(*shape) # [B, C, H, W]
-        return x
-
-
 class MetaFormerBlock(nn.Module):
     """
     Implementation of one MetaFormer block.
@@ -263,8 +179,6 @@ class MetaFormerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, 
                        act_layer=act_layer, drop=drop)
-        self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-
         self.drop_path = DropPath(drop_path) if drop_path > 0. \
             else nn.Identity()
         self.use_layer_scale = use_layer_scale
@@ -273,8 +187,6 @@ class MetaFormerBlock(nn.Module):
                 layer_scale_init_value * torch.ones((dim)), requires_grad=True)
             self.layer_scale_2 = nn.Parameter(
                 layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-
-        self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
 
     def forward(self, x):
@@ -291,19 +203,17 @@ class MetaFormerBlock(nn.Module):
         return x
 
 
-def basic_blocks(dim, index, layers, token_mixer=nn.Identity, 
+def basic_blocks(dim, depth, token_mixer=nn.Identity, 
                  mlp_ratio=4., 
                  act_layer=nn.GELU, norm_layer=LayerNormChannel, 
                  drop_rate=.0, drop_path_rate=0., 
                  use_layer_scale=True, layer_scale_init_value=1e-5):
     """
-    generate PoolFormer blocks for a stage
-    return: PoolFormer blocks 
+    Generate MetaFormer blocks for single-stage (ViT-like).
     """
     blocks = []
-    for block_idx in range(layers[index]):
-        block_dpr = drop_path_rate * (
-            block_idx + sum(layers[:index])) / (sum(layers) - 1)
+    for block_idx in range(depth):
+        block_dpr = drop_path_rate * block_idx / max(depth - 1, 1)
         blocks.append(MetaFormerBlock(
             dim, token_mixer=token_mixer, mlp_ratio=mlp_ratio, 
             act_layer=act_layer, norm_layer=norm_layer, 
@@ -311,78 +221,55 @@ def basic_blocks(dim, index, layers, token_mixer=nn.Identity,
             use_layer_scale=use_layer_scale, 
             layer_scale_init_value=layer_scale_init_value, 
             ))
-    blocks = nn.Sequential(*blocks)
-
-    return blocks
+    return nn.Sequential(*blocks)
 
 
 class MetaFormer(nn.Module):
     """
-    MetaFormer, the main class of our model
-    --layers: [x,x,x,x], number of blocks for the 4 stages
-    --embed_dims, --mlp_ratios: the embedding dims and mlp ratios for the 4 stages
-    --token_mixers: token mixers of different stages
-    --norm_layer, --act_layer: define the types of normalization and activation
-    --num_classes: number of classes for the image classification
-    --in_patch_size, --in_stride, --in_pad: specify the patch embedding
-        for the input image
-    --down_patch_size --down_stride --down_pad: 
-        specify the downsample (patch embed.)
-    --add_pos_embs: position embedding modules of different stages
+    MetaFormer with ViT-like single-stage structure.
+    - Single patch embedding at the beginning.
+    - Positional embedding right after patch embed (once). Default True; set add_pos_emb=False to disable. Uses img_size (default 224) to set grid for pos emb.
+    - No stages / no downsampling; all blocks use same embed_dim.
     """
-    def __init__(self, layers, embed_dims=None, 
-                 token_mixers=None, mlp_ratios=None, 
+    def __init__(self, depth=12, embed_dim=768, 
+                 token_mixer=nn.Identity, mlp_ratio=4., 
                  norm_layer=LayerNormChannel, act_layer=nn.GELU, 
                  num_classes=1000,
-                 in_patch_size=7, in_stride=4, in_pad=2, 
-                 downsamples=None, down_patch_size=3, down_stride=2, down_pad=1, 
-                 add_pos_embs=None, 
+                 patch_size=16, img_size=224,
+                 add_pos_emb=True, 
                  drop_rate=0., drop_path_rate=0.,
                  use_layer_scale=True, layer_scale_init_value=1e-5, 
                  **kwargs):
 
         super().__init__()
-
-
         self.num_classes = num_classes
+        self.embed_dim = embed_dim
 
+        # ViT-style: single patch embedding at the beginning
         self.patch_embed = PatchEmbed(
-            patch_size=in_patch_size, stride=in_stride, padding=in_pad, 
-            in_chans=3, embed_dim=embed_dims[0])
-        if add_pos_embs is None:
-            add_pos_embs = [None] * len(layers)
-        if token_mixers is None:
-            token_mixers = [nn.Identity] * len(layers)
-        # set the main block in network
-        network = []
-        for i in range(len(layers)):
-            if add_pos_embs[i] is not None:
-                network.append(add_pos_embs[i](embed_dims[i]))
-            stage = basic_blocks(embed_dims[i], i, layers, 
-                                 token_mixer=token_mixers[i], mlp_ratio=mlp_ratios[i],
-                                 act_layer=act_layer, norm_layer=norm_layer, 
-                                 drop_rate=drop_rate, 
-                                 drop_path_rate=drop_path_rate,
-                                 use_layer_scale=use_layer_scale, 
-                                 layer_scale_init_value=layer_scale_init_value)
-            network.append(stage)
-            if i >= len(layers) - 1:
-                break
-            if downsamples[i] or embed_dims[i] != embed_dims[i+1]:
-                # downsampling between two stages
-                network.append(
-                    PatchEmbed(
-                        patch_size=down_patch_size, stride=down_stride, 
-                        padding=down_pad, 
-                        in_chans=embed_dims[i], embed_dim=embed_dims[i+1]
-                        )
-                    )
+            patch_size=patch_size, 
+            in_chans=3, embed_dim=embed_dim, norm_layer=norm_layer)
+        # Positional embedding only once, right after patch embed (grid = img_size // patch_size)
+        if add_pos_emb is True:
+            grid_size = img_size // patch_size
+            self.pos_emb = AddPositionEmb(dim=embed_dim, spatial_shape=[grid_size, grid_size])
+        elif add_pos_emb is None or add_pos_emb is False:
+            self.pos_emb = None
+        else:
+            self.pos_emb = add_pos_emb() if not isinstance(add_pos_emb, nn.Module) else add_pos_emb
 
-        self.network = nn.ModuleList(network)
-        self.norm = norm_layer(embed_dims[-1])
+        # Single-stage blocks (no downsampling)
+        self.blocks = basic_blocks(
+            dim=embed_dim, depth=depth,
+            token_mixer=token_mixer, mlp_ratio=mlp_ratio,
+            act_layer=act_layer, norm_layer=norm_layer,
+            drop_rate=drop_rate, drop_path_rate=drop_path_rate,
+            use_layer_scale=use_layer_scale,
+            layer_scale_init_value=layer_scale_init_value)
+
+        self.norm = norm_layer(embed_dim)
         self.head = nn.Linear(
-            embed_dims[-1], num_classes) if num_classes > 0 \
-            else nn.Identity()
+            embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self.cls_init_weights)
 
@@ -399,150 +286,20 @@ class MetaFormer(nn.Module):
     def reset_classifier(self, num_classes):
         self.num_classes = num_classes
         self.head = nn.Linear(
-            self.embed_dims[-1], num_classes) if num_classes > 0 else nn.Identity()
+            self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_embeddings(self, x):
         x = self.patch_embed(x)
+        if self.pos_emb is not None:
+            x = self.pos_emb(x)
         return x
 
     def forward_tokens(self, x):
-        for idx, block in enumerate(self.network):
-            x = block(x)
-        return x
+        return self.blocks(x)
 
     def forward(self, x):
-        # input embedding
         x = self.forward_embeddings(x)
-        # through backbone
         x = self.forward_tokens(x)
         x = self.norm(x)
-        # for image classification
         cls_out = self.head(x.mean([-2, -1]))
         return cls_out
-
-# model_urls = {
-#     "metaformer_id_s12": "https://github.com/sail-sg/poolformer/releases/download/v1.0/metaformer_id_s12.pth.tar",
-#     "metaformer_pppa_s12_224": "https://github.com/sail-sg/poolformer/releases/download/v1.0/metaformer_pppa_s12_224.pth.tar",
-#     "metaformer_ppaa_s12_224": "https://github.com/sail-sg/poolformer/releases/download/v1.0/metaformer_ppaa_s12_224.pth.tar",
-#     "metaformer_pppf_s12_224": "https://github.com/sail-sg/poolformer/releases/download/v1.0/metaformer_pppf_s12_224.pth.tar",
-#     "metaformer_ppff_s12_224": "https://github.com/sail-sg/poolformer/releases/download/v1.0/metaformer_ppff_s12_224.pth.tar",
-# }
-
-
-# @register_model
-# def metaformer_id_s12(pretrained=False, **kwargs):
-#     layers = [2, 2, 6, 2]
-#     embed_dims = [64, 128, 320, 512]
-#     token_mixers = [nn.Identity] * len(layers)
-#     mlp_ratios = [4, 4, 4, 4]
-#     downsamples = [True, True, True, True]
-#     model = MetaFormer(
-#         layers, embed_dims=embed_dims,
-#         token_mixers=token_mixers,
-#         mlp_ratios=mlp_ratios,
-#         norm_layer=GroupNorm,
-#         downsamples=downsamples,
-#         **kwargs)
-#     model.default_cfg = _cfg(crop_pct=0.9)
-#     if pretrained:
-#         url = model_urls['metaformer_id_s12']
-#         checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu", check_hash=True)
-#         model.load_state_dict(checkpoint)
-#     return model
-
-
-# @register_model
-# def metaformer_pppa_s12_224(pretrained=False, **kwargs):
-#     layers = [2, 2, 6, 2]
-#     embed_dims = [64, 128, 320, 512]
-#     add_pos_embs = [None, None, None,
-#         partial(AddPositionEmb, spatial_shape=[7, 7])]
-#     token_mixers = [Pooling, Pooling, Pooling, Attention]
-#     mlp_ratios = [4, 4, 4, 4]
-#     downsamples = [True, True, True, True]
-#     model = MetaFormer(
-#         layers, embed_dims=embed_dims,
-#         token_mixers=token_mixers,
-#         mlp_ratios=mlp_ratios,
-#         downsamples=downsamples,
-#         add_pos_embs=add_pos_embs,
-#         **kwargs)
-#     model.default_cfg = _cfg()
-#     if pretrained:
-#         url = model_urls['metaformer_pppa_s12_224']
-#         checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu", check_hash=True)
-#         model.load_state_dict(checkpoint)
-#     return model
-
-
-# @register_model
-# def metaformer_ppaa_s12_224(pretrained=False, **kwargs):
-#     layers = [2, 2, 6, 2]
-#     embed_dims = [64, 128, 320, 512]
-#     add_pos_embs = [None, None, 
-#         partial(AddPositionEmb, spatial_shape=[14, 14]), None]
-#     token_mixers = [Pooling, Pooling, Attention, Attention]
-#     mlp_ratios = [4, 4, 4, 4]
-#     downsamples = [True, True, True, True]
-#     model = MetaFormer(
-#         layers, embed_dims=embed_dims,
-#         token_mixers=token_mixers,
-#         mlp_ratios=mlp_ratios,
-#         downsamples=downsamples,
-#         add_pos_embs=add_pos_embs,
-#         **kwargs)
-#     model.default_cfg = _cfg()
-#     if pretrained:
-#         url = model_urls['metaformer_ppaa_s12_224']
-#         checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu", check_hash=True)
-#         model.load_state_dict(checkpoint)
-#     return model
-
-
-# @register_model
-# def metaformer_pppf_s12_224(pretrained=False, **kwargs):
-#     layers = [2, 2, 6, 2]
-#     embed_dims = [64, 128, 320, 512]
-#     token_mixers = [Pooling, Pooling, Pooling,
-#         partial(SpatialFc, spatial_shape=[7, 7]),
-#         ]
-#     mlp_ratios = [4, 4, 4, 4]
-#     downsamples = [True, True, True, True]
-#     model = MetaFormer(
-#         layers, embed_dims=embed_dims,
-#         token_mixers=token_mixers,
-#         mlp_ratios=mlp_ratios,
-#         norm_layer=GroupNorm,
-#         downsamples=downsamples,
-#         **kwargs)
-#     model.default_cfg = _cfg(crop_pct=0.9)
-#     if pretrained:
-#         url = model_urls['metaformer_pppf_s12_224']
-#         checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu", check_hash=True)
-#         model.load_state_dict(checkpoint)
-#     return model
-
-
-# @register_model
-# def metaformer_ppff_s12_224(pretrained=False, **kwargs):
-#     layers = [2, 2, 6, 2]
-#     embed_dims = [64, 128, 320, 512]
-#     token_mixers = [Pooling, Pooling, 
-#         partial(SpatialFc, spatial_shape=[14, 14]), 
-#         partial(SpatialFc, spatial_shape=[7, 7]),
-#         ]
-#     mlp_ratios = [4, 4, 4, 4]
-#     downsamples = [True, True, True, True]
-#     model = MetaFormer(
-#         layers, embed_dims=embed_dims,
-#         token_mixers=token_mixers,
-#         mlp_ratios=mlp_ratios,
-#         norm_layer=GroupNorm,
-#         downsamples=downsamples,
-#         **kwargs)
-#     model.default_cfg = _cfg()
-#     if pretrained:
-#         url = model_urls['metaformer_ppff_s12_224']
-#         checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu", check_hash=True)
-#         model.load_state_dict(checkpoint)
-#     return model
