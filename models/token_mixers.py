@@ -1,10 +1,12 @@
 """
-Token mixers for MetaFormer (Pooling, Attention, SpatialFc).
+Token mixers for MetaFormer (Pooling, Attention, SpatialFc, ConvAttention2d).
 """
 from typing import Sequence
 from functools import reduce
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch import einsum
 
 
 class Pooling(nn.Module):
@@ -79,3 +81,55 @@ class SpatialFc(nn.Module):
         x = self.fc(x)
         x = x.reshape(*shape)
         return x
+
+
+class ConvAttention2d(nn.Module):
+    """
+    2D Convolutional self-attention (spatially local attention).
+    Each position attends only to a kernel_size x kernel_size neighborhood.
+    Ref: "Convolutional self-attention networks" (Yang et al., NAACL 2019).
+    Compatible with MetaFormer: input/output shape (B, C, H, W).
+    """
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.0,
+                 kernel_size=3, k=1, **kwargs):
+        super().__init__()
+        self.heads = heads
+        self.dim_head = dim_head
+        self.scale = dim_head ** -0.5
+        inner_dim = dim_head * heads
+        padding = kernel_size // 2
+
+        self.to_q = nn.Conv2d(dim, inner_dim, 1, bias=False)
+        self.to_kv = nn.Conv2d(dim, inner_dim * 2, k, stride=k, bias=False)
+        self.to_out = nn.Sequential(
+            nn.Conv2d(inner_dim, dim, 1),
+            nn.Dropout(dropout)
+        )
+        self.kernel_size = kernel_size
+        self.padding = padding
+        self.w = kernel_size ** 2
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        q = self.to_q(x)   # (B, inner_dim, H, W)
+        kv = self.to_kv(x)
+        k, v = kv.chunk(2, dim=1)
+
+        # q: (B, inner_dim, H, W) -> (B, heads, H*W, dim_head)
+        q = q.flatten(2).transpose(1, 2).reshape(B, H * W, self.heads, self.dim_head).permute(0, 2, 1, 3)
+        # (B, heads, H*W, w) for attention with w neighbors
+        q = q.unsqueeze(3).expand(B, self.heads, H * W, self.w, self.dim_head)
+
+        # Unfold k, v: (B, inner_dim, H, W) -> (B, inner_dim*w, H*W)
+        k = F.unfold(k, kernel_size=self.kernel_size, stride=1, padding=self.padding)
+        v = F.unfold(v, kernel_size=self.kernel_size, stride=1, padding=self.padding)
+        # (B, heads, H*W, w, dim_head)
+        k = k.reshape(B, self.heads, self.dim_head, self.w, H * W).permute(0, 1, 4, 3, 2)
+        v = v.reshape(B, self.heads, self.dim_head, self.w, H * W).permute(0, 1, 4, 3, 2)
+
+        dots = einsum('b h n w d, b h n w d -> b h n w', q, k) * self.scale
+        attn = dots.softmax(dim=-1)
+
+        out = einsum('b h n w, b h n w d -> b h n d', attn, v)
+        out = out.transpose(1, 2).reshape(B, H * W, -1).transpose(1, 2).reshape(B, -1, H, W)
+        return self.to_out(out)

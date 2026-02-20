@@ -13,7 +13,7 @@ from .metaformer import (
     GroupNorm,
     _cfg,
 )
-from .token_mixers import Pooling, Attention, SpatialFc
+from .token_mixers import Pooling, Attention, SpatialFc, ConvAttention2d
 
 
 # ViT-style single-stage model factories (224x224, patch_size=16 -> 14x14 grid)
@@ -77,6 +77,7 @@ CIFAR100_MODEL_NAMES = [
     "metaformer_cifar100_pooling_s6",
     "metaformer_cifar100_attention_s6",
     "metaformer_cifar100_spatialfc_s6",
+    "metaformer_cifar100_convit_s6",
 ]
 
 
@@ -120,3 +121,15 @@ def metaformer_cifar100_spatialfc_s6(**kwargs):
         depth=6, embed_dim=384,
         token_mixer=partial(SpatialFc, spatial_shape=[8, 8]),
         mlp_ratio=4., norm_layer=GroupNorm, **merged)
+
+
+@register_model
+def metaformer_cifar100_convit_s6(**kwargs):
+    """CIFAR-100: 6 blocks, ConvAttention2d token mixer (local 2D conv attention, 8x8 grid)."""
+    merged = {**CIFAR100_KW, **kwargs}
+    return MetaFormer(
+        depth=6, embed_dim=384,
+        token_mixer=partial(ConvAttention2d, heads=6, dim_head=64, kernel_size=3, k=1),
+        mlp_ratio=4., norm_layer=LayerNormChannel,
+        add_pos_emb=partial(AddPositionEmb, dim=384, spatial_shape=[8, 8]),
+        **merged)
