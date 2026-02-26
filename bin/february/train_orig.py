@@ -34,7 +34,7 @@ from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
 
-from config import parse_args
+from bin.february.config import parse_args
 import models
 
 try:
