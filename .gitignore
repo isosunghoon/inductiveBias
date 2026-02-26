@@ -1,4 +1,6 @@
-.venv
 data
 output
+
+.venv
+__pycache__
 */__pycache__

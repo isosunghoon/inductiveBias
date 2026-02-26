@@ -3,11 +3,13 @@ import random
 import numpy as np
 import torch.nn as nn
 from models.metaformer import MetaFormer
+import models.token_mixers as TM
 from utils.config import parse_args
 from utils.dataset import get_dataloader
-from utils.AverageMeter import AverageMeter
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+from functools import partial
+
 import warnings
 warnings.filterwarnings(
     "ignore",
@@ -29,6 +31,9 @@ def setup(args):
 
     if args.model == "identity":
         args.token_mixer = nn.Identity
+    elif args.model == "vit":
+        args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
+                            attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
 
     model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio, 
                  norm_layer=args.norm_layer, act_layer=args.act_layer, num_classes=args.num_classes, patch_size=args.patch_size, img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_rate=args.drop_rate, drop_path_rate = args.drop_path,
@@ -58,7 +63,6 @@ def train(args, model):
         scaler = torch.cuda.amp.GradScaler()
 
     model.zero_grad()
-    losses = AverageMeter()
 
     # train loop
     for epoch in range(1, args.epochs+1):
@@ -66,14 +70,17 @@ def train(args, model):
         epoch_iterator = tqdm(train_loader, desc="Training (X / X epochs) (loss=X.X)",
                                 bar_format="{l_bar}{r_bar}", dynamic_ncols=True)
     
-        for _, batch in enumerate(epoch_iterator):
-            batch = tuple(t.to(args.device) for t in batch)
+        running_loss = torch.zeros((), device=args.device)
+        for step, batch in enumerate(epoch_iterator):
             x, y = batch
+            x = x.to(args.device, non_blocking=True)
+            y = y.to(args.device, non_blocking=True)
+            
             with torch.amp.autocast('cuda', enabled=args.fp16):
                 logits = model(x) 
                 loss = torch.nn.functional.cross_entropy(logits, y)
             
-            losses.update(loss.item())
+            running_loss += loss.detach()
 
             if args.fp16:
                 scaler.scale(loss).backward()
@@ -86,14 +93,16 @@ def train(args, model):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()        
 
-            scheduler.step()
             optimizer.zero_grad()
             
-            epoch_iterator.set_description(
-                "Training (%d / %d epochs) (loss=%2.5f)" % (epoch, args.epochs, losses.val)
-            )
+            if step % args.log_interval == 0:
+                avg_loss = (running_loss / step).item()
+                running_loss.zero_()
+                epoch_iterator.set_description(
+                    f"Training ({epoch} / {args.epochs} epochs) (loss={avg_loss:.5f})"
+                )
         
-        losses.reset()
+        scheduler.step()
 
         # TODO
         # add validation
