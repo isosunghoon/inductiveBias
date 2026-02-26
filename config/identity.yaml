@@ -40,4 +40,4 @@ log_interval: 50
 fp16: true
 data_path: ./data
 save_best: true
-output_path: ./out/identity/
+output_path: ./output/identity/

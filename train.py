@@ -63,6 +63,7 @@ def train(args, model):
         scaler = torch.cuda.amp.GradScaler()
 
     model.zero_grad()
+    best_acc = 0
 
     # train loop
     for epoch in range(1, args.epochs+1):
@@ -104,17 +105,38 @@ def train(args, model):
         
         scheduler.step()
 
-        # TODO
-        # add validation
-            # if epoch % args.eval_step == 0:
-            #     accuracy = valid(args, model, writer, test_loader, global_step)
-            #         if best_acc < accuracy:
-            #             save_model(args, model)
-            #             best_acc = accuracy
-            #         model.train()
+        if epoch % args.eval_interval == 0:
+            val_acc = validate(args, model, test_loader)
+            print(f"[Eval] epoch {epoch}/{args.epochs} | val_acc: {val_acc:.2f}%")
 
-            #     if global_step % t_total == 0:
-            #         break
+            if val_acc > best_acc:
+                best_acc = val_acc
+                if args.save_best:
+                    save_path = args.output_path+'/best.pt'
+                    torch.save(model.state_dict(), save_path)
+                    print(f"[Eval] best model saved to {save_path} (acc={best_acc:.2f}%)")
+
+            model.train()
+
+def validate(args, model, data_loader):
+    model.eval()
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for x, y in data_loader:
+            x = x.to(args.device, non_blocking=True)
+            y = y.to(args.device, non_blocking=True)
+
+            with torch.amp.autocast('cuda', enabled=args.fp16):
+                logits = model(x)
+
+            pred = torch.argmax(logits, dim=1)
+            correct += (pred == y).sum().item()
+            total += y.size(0)
+
+    acc = 100.0 * correct / total
+    return acc
 
 def main():
     args = parse_args()
