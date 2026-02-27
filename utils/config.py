@@ -86,4 +86,3 @@ def parse_args():
             setattr(args, k, v)
 
     return args
-    return args

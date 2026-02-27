@@ -2,10 +2,14 @@ import torch
 import random
 import numpy as np
 import torch.nn as nn
+
 from models.metaformer import MetaFormer
 import models.token_mixers as TM
+import models.norm_layers as NL
+
 from utils.config import parse_args
 from utils.dataset import get_dataloader
+
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from functools import partial
@@ -25,6 +29,8 @@ def set_seed(SEED):
 def setup(args):
     if args.norm_layer == 'identity':
         args.norm_layer = nn.Identity
+    elif args.norm_layer == 'layernorm':
+        args.norm_layer = NL.LayerNorm
 
     if args.act_layer == 'GELU':
         args.act_layer = nn.GELU

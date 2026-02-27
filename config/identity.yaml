@@ -35,7 +35,7 @@ eval_interval: 5
 
 # ===== Etc =====
 num_classes: 100
-num_workers: 4
+num_workers: 8
 log_interval: 50
 fp16: true
 data_path: ./data
