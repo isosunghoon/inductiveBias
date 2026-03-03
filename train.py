@@ -21,6 +21,11 @@ warnings.filterwarnings(
     module="torch.optim.lr_scheduler"
 )
 
+from dotenv import load_dotenv
+load_dotenv()
+
+import wandb
+
 def set_seed(SEED):
     random.seed(SEED)
     np.random.seed(SEED)
@@ -41,14 +46,14 @@ def setup(args):
         args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
                             attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
 
-    model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio, 
+    model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio,
                  norm_layer=args.norm_layer, act_layer=args.act_layer, num_classes=args.num_classes, patch_size=args.patch_size, img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_rate=args.drop_rate, drop_path_rate = args.drop_path,
                  use_layer_scale=args.use_layer_scale, layer_scale_init_value=args.layer_scale_init_value)
     model.to(args.device)
 
     return model
 
-def train(args, model):
+def train(args, model, run=None):
     # prepare dataset
     train_loader, test_loader = get_dataloader(args)
 
@@ -56,7 +61,7 @@ def train(args, model):
     # TODO
     # use other optimizer (e.g. Adam)
     optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
-    
+
     if args.decay_type == "cosine":
         warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
         main_scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs - args.warmup_epochs)
@@ -66,28 +71,30 @@ def train(args, model):
 
     scaler = None
     if args.fp16:
-        scaler = torch.cuda.amp.GradScaler()
+        scaler = torch.amp.GradScaler('cuda')
 
     model.zero_grad()
     best_acc = 0
+    global_step = 0
 
     # train loop
     for epoch in range(1, args.epochs+1):
         model.train()
         epoch_iterator = tqdm(train_loader, desc="Training (X / X epochs) (loss=X.X)",
                                 bar_format="{l_bar}{r_bar}", dynamic_ncols=True)
-    
+
         running_loss = torch.zeros((), device=args.device)
         for step, batch in enumerate(epoch_iterator):
             x, y = batch
             x = x.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
-            
+
             with torch.amp.autocast('cuda', enabled=args.fp16):
-                logits = model(x) 
+                logits = model(x)
                 loss = torch.nn.functional.cross_entropy(logits, y)
-            
+
             running_loss += loss.detach()
+            global_step += 1
 
             if args.fp16:
                 scaler.scale(loss).backward()
@@ -98,22 +105,31 @@ def train(args, model):
             else:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.step()        
+                optimizer.step()
 
             optimizer.zero_grad()
-            
+
             if step % args.log_interval == 0:
-                avg_loss = (running_loss / step).item()
+                avg_loss = (running_loss / (step + 1)).item()
                 running_loss.zero_()
                 epoch_iterator.set_description(
                     f"Training ({epoch} / {args.epochs} epochs) (loss={avg_loss:.5f})"
                 )
-        
+                if run is not None:
+                    run.log({"train/loss": avg_loss, "train/step": global_step})
+
         scheduler.step()
+
+        current_lr = scheduler.get_last_lr()[0]
+        if run is not None:
+            run.log({"train/lr": current_lr, "epoch": epoch})
 
         if epoch % args.eval_interval == 0:
             val_acc = validate(args, model, test_loader)
             print(f"[Eval] epoch {epoch}/{args.epochs} | val_acc: {val_acc:.2f}%")
+
+            if run is not None:
+                run.log({"val/acc": val_acc, "epoch": epoch})
 
             if val_acc > best_acc:
                 best_acc = val_acc
@@ -144,12 +160,32 @@ def validate(args, model, data_loader):
     acc = 100.0 * correct / total
     return acc
 
+def build_wandb_config(args):
+    """Build a serializable config dict from args (before setup() mutates class fields)."""
+    exclude = {"config", "device"}
+    return {k: v for k, v in vars(args).items() if k not in exclude}
+
 def main():
     args = parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args.seed)
-    model = setup(args)
-    train(args, model)
+
+    run_name = f"{args.model}_d{args.depth}_emb{args.embed_dim}"
+
+    if args.no_wandb:
+        run = None
+        model = setup(args)
+        train(args, model, run=None)
+    else:
+        wandb_config = build_wandb_config(args)
+        with wandb.init(
+            entity="snu-inductive-bias",
+            project="sample",
+            name=run_name,
+            config=wandb_config,
+        ) as run:
+            model = setup(args)
+            train(args, model, run=run)
 
 
 if __name__ == "__main__":
