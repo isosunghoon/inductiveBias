@@ -9,6 +9,12 @@ def get_dataloader(args):
             train_transforms.append(transforms.Resize((args.img_size, args.img_size)))
             test_transforms.append(transforms.Resize((args.img_size, args.img_size)))
 
+        if args.augment:
+            train_transforms.extend([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+            ])
+
         train_transforms.extend([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761]),

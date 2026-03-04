@@ -25,7 +25,7 @@ def get_parser():
     parser.add_argument("--drop_rate", type=float, default=0.0, help="dropout rate")
     parser.add_argument("--drop_path", type=float, default=0.0, help="drop path rate")
     parser.add_argument("--add_pos_emb", action="store_true", help="add positional embedding")
-    parser.add_argument("--use_layer_scale", action="store_true", default=True, help="use layer scale")
+    parser.add_argument("--use_layer_scale", action="store_true", help="use layer scale")
     parser.add_argument("--layer_scale_init_value", type=float, default=1e-5, help="layer scale initial value")
     
     # train 하이퍼파라미터
@@ -33,13 +33,14 @@ def get_parser():
     parser.add_argument("--train_batch_size", type=int, default=128, help="batch size for training")
     parser.add_argument("--test_batch_size", type=int, default=256, help="batch size for evaluation")
 
+    parser.add_argument("--optimizer", type=str, default="sgd", help="optimizer type")
     parser.add_argument("--learning_rate", type=float, default=0.1, help="optimizer learning rate")
-    parser.add_argument("--momentum", type=float, default=0.9, help="SGD momentum")
     parser.add_argument("--weight_decay", type=float, default=5e-4, help="weight decay (L2 regularization)")
     parser.add_argument("--decay_type", default="cosine", help="lr decay type (cosine or linear)")
     parser.add_argument("--warmup_epochs", type=int, default=1, help="number of warmup epochs")
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="max gradient norm for clipping")
-    
+    parser.add_argument("--augment", action="store_true", help="use augmentation")
+
     # validation 관련
     parser.add_argument("--eval_interval", type=int, default=5, help="run validation every N epochs")
     parser.add_argument("--save_best", action="store_true", help="save best model by val acc")

@@ -14,6 +14,7 @@ from tqdm import tqdm
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from functools import partial
 
+import os
 import warnings
 warnings.filterwarnings(
     "ignore",
@@ -52,10 +53,11 @@ def train(args, model):
     # prepare dataset
     train_loader, test_loader = get_dataloader(args)
 
-    # prepare optimizer & schedular
-    # TODO
-    # use other optimizer (e.g. Adam)
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
+    # prepare optimizer & scheduler
+    if args.optimizer == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
+    elif args.optimizer == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
     
     if args.decay_type == "cosine":
         warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
@@ -118,7 +120,8 @@ def train(args, model):
             if val_acc > best_acc:
                 best_acc = val_acc
                 if args.save_best:
-                    save_path = args.output_path+'/best.pt'
+                    os.makedirs(args.output_path, exist_ok=True)
+                    save_path = os.path.join(args.output_path, 'best.pt')
                     torch.save(model.state_dict(), save_path)
                     print(f"[Eval] best model saved to {save_path} (acc={best_acc:.2f}%)")
 

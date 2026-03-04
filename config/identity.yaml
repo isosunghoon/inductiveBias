@@ -24,14 +24,15 @@ epochs: 100
 train_batch_size: 128
 test_batch_size: 256
 
-learning_rate: 3e-4
+optimizer: sgd
+learning_rate: 0.05
 weight_decay: 0.05
 decay_type: cosine
 warmup_epochs: 10
 max_grad_norm: 1.0
 eval_interval: 5
+augment: false
 
-# ===== Validation =====
 
 # ===== Etc =====
 num_classes: 100
