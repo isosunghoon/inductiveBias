@@ -9,11 +9,13 @@ def get_dataloader(args):
             train_transforms.append(transforms.Resize((args.img_size, args.img_size)))
             test_transforms.append(transforms.Resize((args.img_size, args.img_size)))
 
-        if args.augment:
+        if args.augment == 'weak':
             train_transforms.extend([
                 transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(),
             ])
+        elif args.augment == 'strong':
+            pass
 
         train_transforms.extend([
             transforms.ToTensor(),

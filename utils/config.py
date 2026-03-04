@@ -39,7 +39,7 @@ def get_parser():
     parser.add_argument("--decay_type", default="cosine", help="lr decay type (cosine or linear)")
     parser.add_argument("--warmup_epochs", type=int, default=1, help="number of warmup epochs")
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="max gradient norm for clipping")
-    parser.add_argument("--augment", action="store_true", help="use augmentation")
+    parser.add_argument("--augment", type=str, help="use augmentation")
 
     # validation 관련
     parser.add_argument("--eval_interval", type=int, default=5, help="run validation every N epochs")
