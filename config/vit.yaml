@@ -36,7 +36,7 @@ decay_type: cosine
 warmup_epochs: 20
 max_grad_norm: 1.0
 eval_interval: 5
-augment: true
+augment: strong
 
 # ===== Etc =====
 num_classes: 100

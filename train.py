@@ -56,7 +56,7 @@ def setup(args):
 
 def train(args, model, run=None):
     # prepare dataset
-    train_loader, test_loader = get_dataloader(args)
+    train_loader, test_loader, mixup_fn = get_dataloader(args)
 
     # prepare optimizer & scheduler
     if args.optimizer == "sgd":
@@ -91,9 +91,12 @@ def train(args, model, run=None):
             x = x.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
+            if mixup_fn is not None:
+                x, y = mixup_fn(x, y)
+
             with torch.amp.autocast('cuda', enabled=args.fp16):
                 logits = model(x)
-                loss = torch.nn.functional.cross_entropy(logits, y)
+                loss = torch.nn.functional.cross_entropy(logits, y, label_smoothing=args.label_smoothing)
 
             running_loss += loss.detach()
             global_step += 1
