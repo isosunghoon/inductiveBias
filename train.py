@@ -30,6 +30,10 @@ def set_seed(SEED):
     torch.manual_seed(SEED)
 
 def setup(args):
+    wandb.define_metric("epoch")
+    wandb.define_metric("train/*", step_metric="epoch")
+    wandb.define_metric("val/*", step_metric="epoch")
+
     if args.norm_layer == 'identity':
         args.norm_layer = nn.Identity
     elif args.norm_layer == 'layernorm':
@@ -111,17 +115,14 @@ def train(args, model, run=None):
             if step % args.log_interval == 0:
                 avg_loss = (running_loss / (step + 1)).item()
                 running_loss.zero_()
-                epoch_iterator.set_description(
-                    f"Training ({epoch} / {args.epochs} epochs) (loss={avg_loss:.5f})"
-                )
-                if run is not None:
-                    run.log({"train/loss": avg_loss})
+                epoch_iterator.set_description(f"Training ({epoch} / {args.epochs} epochs) (loss={avg_loss:.5f})")
 
         scheduler.step()
 
         current_lr = scheduler.get_last_lr()[0]
         if run is not None:
             run.log({"train/lr": current_lr, "epoch": epoch})
+            run.log({"train/loss": (running_loss / len(train_loader)).item(), "epoch": epoch})
 
         if epoch % args.eval_interval == 0:
             val_acc = validate(args, model, test_loader)
