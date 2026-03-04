@@ -42,3 +42,4 @@ fp16: true
 data_path: ./data
 save_best: true
 output_path: ./output/identity/
+no_wandb: false

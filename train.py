@@ -22,9 +22,6 @@ warnings.filterwarnings(
     module="torch.optim.lr_scheduler"
 )
 
-from dotenv import load_dotenv
-load_dotenv()
-
 import wandb
 
 def set_seed(SEED):
@@ -61,8 +58,8 @@ def train(args, model, run=None):
     # prepare optimizer & scheduler
     if args.optimizer == "sgd":
         optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
-    elif args.optimizer == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
+    elif args.optimizer == "adamw":
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
     
     if args.decay_type == "cosine":
         warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
@@ -118,7 +115,7 @@ def train(args, model, run=None):
                     f"Training ({epoch} / {args.epochs} epochs) (loss={avg_loss:.5f})"
                 )
                 if run is not None:
-                    run.log({"train/loss": avg_loss, "train/step": global_step})
+                    run.log({"train/loss": avg_loss})
 
         scheduler.step()
 
@@ -173,7 +170,7 @@ def main():
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args.seed)
 
-    run_name = f"{args.model}_d{args.depth}_emb{args.embed_dim}"
+    run_name = f"{args.model}_p{args.patch_size}"
 
     if args.no_wandb:
         run = None
@@ -181,15 +178,9 @@ def main():
         train(args, model, run=None)
     else:
         wandb_config = build_wandb_config(args)
-        with wandb.init(
-            entity="snu-inductive-bias",
-            project="sample",
-            name=run_name,
-            config=wandb_config,
-        ) as run:
+        with wandb.init(entity="snu-inductive-bias", project="exp1", name=run_name, config=wandb_config,) as run:
             model = setup(args)
             train(args, model, run=run)
-
 
 if __name__ == "__main__":
     main()

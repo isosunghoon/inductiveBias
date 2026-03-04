@@ -1,6 +1,23 @@
 import torch
 import torch.nn as nn
 
+class DropPath(nn.Module):
+    def __init__(self, drop_prob=0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        if self.drop_prob == 0. or not self.training:
+            return x
+
+        keep_prob = 1 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+
+        return x / keep_prob * random_tensor
+
 class PatchEmbed(nn.Module):
     """
     Patch Embedding that is implemented by a layer of conv. 
@@ -120,8 +137,7 @@ class MetaFormerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
         
-        # self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.drop_path = nn.Identity()
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         self.use_layer_scale = use_layer_scale
         if use_layer_scale:
