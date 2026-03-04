@@ -52,6 +52,7 @@ def get_parser():
     parser.add_argument("--log_interval", type=int, default=50, help="steps between logging/progress updates")
     parser.add_argument("--fp16", action="store_true", help="enable mixed precision training (AMP fp16)")
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
+    parser.add_argument("--no_wandb", action="store_true", help="disable Weights & Biases logging")
 
     # token-mixer specific
     # attention
