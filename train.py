@@ -48,7 +48,7 @@ def setup(args):
         args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
                             attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
     elif args.model == "local_vit":
-        args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, window_size=args.window_size, 
+        args.token_mixer = partial(TM.convAttention, head_dim=args.attn_head_dim, window_size=args.window_size, 
                             qkv_bias=args.attn_qkv_bias, attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
         
     model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio,
