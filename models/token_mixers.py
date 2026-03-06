@@ -42,7 +42,7 @@ class Attention(nn.Module):
         return x
 
 
-class convAttention(nn.Module):
+class ConvAttention(nn.Module):
     def __init__(self, dim, head_dim = 32, window_size = 5, qkv_bias=False, attn_drop=0., proj_drop=0.):
         super().__init__()
         assert dim % head_dim == 0, 'dim should be divisible by head_dim'
@@ -104,3 +104,7 @@ class convAttention(nn.Module):
         x = x.transpose(-2, -1).reshape(B, C, H, W)
 
         return x
+
+
+# Backward-compatible alias.
+convAttention = ConvAttention
