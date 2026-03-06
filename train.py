@@ -134,9 +134,6 @@ def train(args, model, run=None):
             val_acc = validate(args, model, test_loader)
             print(f"[Eval] epoch {epoch}/{args.epochs} | val_acc: {val_acc:.2f}%")
 
-            if run is not None:
-                run.log({"val/acc": val_acc, "epoch": epoch})
-
             if val_acc > best_acc:
                 best_acc = val_acc
                 if args.save_best:
@@ -144,6 +141,10 @@ def train(args, model, run=None):
                     save_path = os.path.join(args.output_path, 'best.pt')
                     torch.save(model.state_dict(), save_path)
                     print(f"[Eval] best model saved to {save_path} (acc={best_acc:.2f}%)")
+
+            if run is not None:
+                run.log({"val/acc": val_acc, "epoch": epoch})
+                run.log({"val/best_acc": best_acc, "epoch": epoch})
 
             model.train()
 
