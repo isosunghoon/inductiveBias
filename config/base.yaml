@@ -1,10 +1,12 @@
+# ===== Base config (vitreference 기준 공통 기본값) =====
+# 모델별 yaml (config/model_*.yaml) 이 이 값들을 덮어씁니다.
+
 # ===== Basic =====
 seed: 67
 dataset: cifar100
-model: identity
 
-# ===== token mixer =====
-attn_head_dim: 64 # maybe change to 32
+# ===== Token mixer =====
+attn_head_dim: 64
 attn_qkv_bias: true
 attn_drop: 0.0
 attn_proj_drop: 0.0
@@ -36,6 +38,7 @@ decay_type: cosine
 warmup_epochs: 5
 max_grad_norm: 5.0
 eval_interval: 5
+label_smoothing: 0.1
 augment: strong
 
 # ===== Etc =====
@@ -45,5 +48,4 @@ log_interval: 50
 fp16: true
 data_path: ./data
 save_best: true
-output_path: ./output/identityreference/
 no_wandb: false

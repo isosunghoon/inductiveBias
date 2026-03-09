@@ -5,7 +5,10 @@ import os
 def get_parser():
     parser = argparse.ArgumentParser()
     # config
-    parser.add_argument("--config", type=str, default=None, help="path to config file")
+    parser.add_argument("--base_config", type=str, default="./config/base.yaml",
+                        help="path to base config yaml (shared defaults, e.g. config/base.yaml)")
+    parser.add_argument("--config", type=str, default=None,
+                        help="path to model-specific config yaml (e.g. config/model_vit.yaml)")
 
     # 기본
     parser.add_argument('--seed', type=int, default=67, help="random seed for initialization") #six-seven
@@ -68,27 +71,29 @@ def get_parser():
     return parser
 
     
+def _apply_yaml(args, path):
+    """Load a yaml file and apply its values onto args. Raises on unknown keys."""
+    assert os.path.exists(path), f"Config not found: {path}"
+    with open(path, "r") as f:
+        cfg = yaml.safe_load(f)
+    for k, v in cfg.items():
+        if not hasattr(args, k):
+            raise ValueError(f"Unknown config key '{k}' in {path}")
+        old_val = getattr(args, k)
+        if old_val is not None:
+            v = type(old_val)(v)
+        setattr(args, k, v)
+
+
 def parse_args():
     parser = get_parser()
     args = parser.parse_args()
 
-    if args.config is not None:
-        assert os.path.exists(args.config), f"Config not found: {args.config}"
-        with open(args.config, "r") as f:
-            cfg = yaml.safe_load(f)
+    # Load order: base_config first, then model-specific config overrides it.
+    if args.base_config is not None:
+        _apply_yaml(args, args.base_config)
 
     if args.config is not None:
-        with open(args.config, "r") as f:
-            cfg = yaml.safe_load(f)
-
-        for k, v in cfg.items():
-            if not hasattr(args, k):
-                raise ValueError(f"Unknown config key: {k}")
-
-            old_val = getattr(args, k)
-            if old_val is not None:
-                v = type(old_val)(v)
-
-            setattr(args, k, v)
+        _apply_yaml(args, args.config)
 
     return args
