@@ -13,7 +13,7 @@ class Attention(nn.Module):
         self.num_heads = dim // head_dim
         self.scale = head_dim ** -0.5
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)x  
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -104,7 +104,3 @@ class ConvAttention(nn.Module):
         x = x.transpose(-2, -1).reshape(B, C, H, W)
 
         return x
-
-
-# Backward-compatible alias.
-convAttention = ConvAttention
