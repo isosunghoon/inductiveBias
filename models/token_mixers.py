@@ -156,7 +156,7 @@ class MLPMixer(nn.Module):
         # dim = C
         super().__init__()
         assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
-        num_patches = img_size // patch_size
+        num_patches = (img_size // patch_size) ** 2
         self.dim = dim
         self.expansion_factor = expansion_factor
         self.mixer_drop = mixer_drop
