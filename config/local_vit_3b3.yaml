@@ -4,7 +4,7 @@ dataset: cifar100
 model: local_vit
 
 # ===== token mixer =====
-window_size: 5
+window_size: 3
 attn_head_dim: 64 # maybe change to 32
 attn_qkv_bias: true
 attn_drop: 0.0
