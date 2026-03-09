@@ -1,0 +1,47 @@
+# ===== Basic =====
+seed: 67
+dataset: cifar100
+model: MLP-Mixer
+
+# ===== token mixer =====
+expansion_factor: 2 # parameters for the MLPMixer
+mixer_drop: 0.5
+
+# ===== Model =====
+img_size: 32
+patch_size: 2
+embed_dim: 192
+depth: 12
+mlp_ratio: 4.0
+norm_layer: layernorm
+act_layer: GELU
+
+drop_rate: 0.0
+drop_path: 0.1
+add_pos_emb: true
+use_layer_scale: false
+layer_scale_init_value: 1e-5
+
+# ===== Training =====
+epochs: 500
+train_batch_size: 96
+test_batch_size: 256
+
+optimizer: adamw
+learning_rate: 1.25e-4
+weight_decay: 0.05
+decay_type: cosine
+warmup_epochs: 5
+max_grad_norm: 5.0
+eval_interval: 5
+augment: strong
+
+# ===== Etc =====
+num_classes: 100
+num_workers: 8
+log_interval: 50
+fp16: true
+data_path: ./data
+save_best: true
+output_path: ./output/vit/
+no_wandb: false
