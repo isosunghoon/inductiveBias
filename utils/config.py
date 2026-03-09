@@ -60,6 +60,7 @@ def get_parser():
     # token-mixer specific
     # attention
     parser.add_argument("--attn_head_dim", type=int, default=32, help="per-head dimension for Attention mixer")
+    parser.add_argument("--window_size", type=int, default=5, help="local attention window size (odd)")
     parser.add_argument("--attn_qkv_bias", action="store_true", help="use bias in qkv projection")
     parser.add_argument("--attn_drop", type=float, default=0.0, help="attention dropout rate")
     parser.add_argument("--attn_proj_drop", type=float, default=0.0, help="output projection dropout rate")

@@ -48,7 +48,7 @@ def setup(args):
         args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
                             attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
     elif args.model == "local_vit":
-        args.token_mixer = partial(TM.convAttention, head_dim=args.attn_head_dim, window_size=args.window_size, 
+        args.token_mixer = partial(TM.ConvAttention, head_dim=args.attn_head_dim, window_size=args.window_size, 
                             qkv_bias=args.attn_qkv_bias, attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
     elif args.model == "MLP-Mixer":
         args.token_mixer = partial(TM.MLPMixer, img_size=args.img_size, patch_size=args.patch_size,
@@ -137,9 +137,6 @@ def train(args, model, run=None):
             val_acc = validate(args, model, test_loader)
             print(f"[Eval] epoch {epoch}/{args.epochs} | val_acc: {val_acc:.2f}%")
 
-            if run is not None:
-                run.log({"val/acc": val_acc, "epoch": epoch})
-
             if val_acc > best_acc:
                 best_acc = val_acc
                 if args.save_best:
@@ -147,6 +144,10 @@ def train(args, model, run=None):
                     save_path = os.path.join(args.output_path, 'best.pt')
                     torch.save(model.state_dict(), save_path)
                     print(f"[Eval] best model saved to {save_path} (acc={best_acc:.2f}%)")
+
+            if run is not None:
+                run.log({"val/acc": val_acc, "epoch": epoch})
+                run.log({"val/best_acc": best_acc, "epoch": epoch})
 
             model.train()
 
