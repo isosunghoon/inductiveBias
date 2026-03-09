@@ -3,16 +3,3 @@
 model: identity
 output_path: ./output/identity/
 
-patch_size: 2
-embed_dim: 256
-depth: 8
-norm_layer: identity
-drop_path: 0.0
-use_layer_scale: true
-epochs: 100
-train_batch_size: 128
-optimizer: sgd
-learning_rate: 0.05
-warmup_epochs: 10
-max_grad_norm: 1.0
-augment: none
