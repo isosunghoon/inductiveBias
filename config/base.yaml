@@ -13,7 +13,7 @@ attn_proj_drop: 0.0
 
 # ===== Model =====
 img_size: 32
-patch_size: 2
+patch_size: 4
 embed_dim: 192
 depth: 12
 mlp_ratio: 4.0
