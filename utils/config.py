@@ -67,6 +67,8 @@ def get_parser():
     parser.add_argument("--attn_qkv_bias", action="store_true", help="use bias in qkv projection")
     parser.add_argument("--attn_drop", type=float, default=0.0, help="attention dropout rate")
     parser.add_argument("--attn_proj_drop", type=float, default=0.0, help="output projection dropout rate")
+    parser.add_argument("--expansion_factor", type=int, default=2, help="hidden dimension expansion rate")
+    parser.add_argument("--mixer_drop", type=float, default=0.5, help="mlp mixer layer drop rate")
 
     return parser
 
