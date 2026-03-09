@@ -180,5 +180,12 @@ class MLPMixer(nn.Module):
 
 
 # poolFormer Implementation
-class poolFormer(nn.Module):
-    pass
+class PoolFormer(nn.Module):
+    def __init__(self, dim, pool_size=3, stride=1):
+        super().__init__()
+        self.pool = nn.AvgPool2d(
+            pool_size, stride=stride, padding=pool_size//2, count_include_pad=False
+        )
+    
+    def forward(self, x):
+        return self.pool(x) - x

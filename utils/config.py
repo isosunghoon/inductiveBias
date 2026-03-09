@@ -67,16 +67,21 @@ def get_parser():
     parser.add_argument("--attn_qkv_bias", action="store_true", help="use bias in qkv projection")
     parser.add_argument("--attn_drop", type=float, default=0.0, help="attention dropout rate")
     parser.add_argument("--attn_proj_drop", type=float, default=0.0, help="output projection dropout rate")
+    
+    # MLP-Mixer
     parser.add_argument("--expansion_factor", type=int, default=2, help="hidden dimension expansion rate")
     parser.add_argument("--mixer_drop", type=float, default=0.5, help="mlp mixer layer drop rate")
 
+    # PoolFormer
+    parser.add_argument("--pool_size", type=int, default=3, help="pooling size for PoolFormer")
+    parser.add_argument("--stride", type=int, default=1, help="stride for PoolFormer")
     return parser
 
     
 def _apply_yaml(args, path):
     """Load a yaml file and apply its values onto args. Raises on unknown keys."""
     assert os.path.exists(path), f"Config not found: {path}"
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     for k, v in cfg.items():
         if not hasattr(args, k):

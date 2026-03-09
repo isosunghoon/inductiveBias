@@ -1,0 +1,5 @@
+# ===== token mixer =====
+model: poolformer
+output_path: ./output/poolformer/
+pool_size: 3
+stride: 1 # parameters for the poolformer
