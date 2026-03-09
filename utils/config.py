@@ -57,6 +57,9 @@ def get_parser():
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
     parser.add_argument("--no_wandb", action="store_true", help="disable Weights & Biases logging")
 
+    # visualization
+    parser.add_argument("--return_attn", action="store_true", help="return attention maps from forward pass (inference only)")
+
     # token-mixer specific
     # attention
     parser.add_argument("--attn_head_dim", type=int, default=32, help="per-head dimension for Attention mixer")

@@ -154,6 +154,25 @@ class MetaFormerBlock(nn.Module):
             x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
+    def forward_with_attn(self, x):
+        """Same as forward() but also returns attention weights when the token mixer supports it.
+        Returns: (x, attn_weights) where attn_weights is [B, num_heads, N, N] or None.
+        Only used at inference time for visualization — does not affect training."""
+        supports = getattr(self.token_mixer, 'supports_attn_return', False)
+        if supports:
+            mixed, attn_weights = self.token_mixer(self.norm1(x), return_attn=True)
+        else:
+            mixed = self.token_mixer(self.norm1(x))
+            attn_weights = None
+
+        if self.use_layer_scale:
+            x = x + self.drop_path(self.layer_scale_1.unsqueeze(-1).unsqueeze(-1) * mixed)
+            x = x + self.drop_path(self.layer_scale_2.unsqueeze(-1).unsqueeze(-1) * self.mlp(self.norm2(x)))
+        else:
+            x = x + self.drop_path(mixed)
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x, attn_weights
+
 
 def sequential_blocks(dim, depth, token_mixer=nn.Identity, mlp_ratio=4., act_layer=nn.GELU, norm_layer=nn.Identity, 
                  drop_rate=.0, drop_path_rate=0., use_layer_scale=True, layer_scale_init_value=1e-5):
@@ -234,12 +253,20 @@ class MetaFormer(nn.Module):
     def forward_tokens(self, x):
         return self.blocks(x)
 
-    def forward(self, x):
+    def forward(self, x, return_attn=False):
         x = self.forward_embeddings(x)
+        if return_attn:
+            # Iterate blocks manually to collect attention maps — only used at inference time
+            attn_maps = []
+            for block in self.blocks:
+                x, attn = block.forward_with_attn(x)
+                attn_maps.append(attn)
+            x = self.norm(x)
+            cls_out = self.head(x.mean([-2, -1]))
+            return cls_out, attn_maps
         x = self.forward_tokens(x)
         x = self.norm(x)
-        cls_out = self.head(x.mean([-2, -1]))
-        return cls_out
+        return self.head(x.mean([-2, -1]))
     
     def count_parameters(self):
         params = sum(p.numel() for p in self.parameters() if p.requires_grad)

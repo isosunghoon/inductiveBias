@@ -5,7 +5,10 @@ import torch.nn.functional as F
 class Attention(nn.Module):
     """
     Attention module that can take tensor with [B, N, C] or [B, C, H, W] as input.
+    Supports returning attention weights for visualization via return_attn=True.
     """
+    supports_attn_return = True
+
     def __init__(self, dim, head_dim=32, qkv_bias=False, attn_drop=0., proj_drop=0.):
         super().__init__()
         assert dim % head_dim == 0, 'dim should be divisible by head_dim'
@@ -18,7 +21,7 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x):
+    def forward(self, x, return_attn=False):
         shape = x.shape
         if len(shape) == 4:
             B, C, H, W = shape
@@ -31,6 +34,7 @@ class Attention(nn.Module):
 
         attn = (q * self.scale) @ k.transpose(-2, -1)
         attn = attn.softmax(dim=-1)
+        attn_weights = attn  # [B, num_heads, N, N] — saved before dropout for visualization
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
@@ -39,10 +43,14 @@ class Attention(nn.Module):
         if len(shape) == 4:
             x = x.transpose(-2, -1).reshape(B, C, H, W)
 
+        if return_attn:
+            return x, attn_weights
         return x
 
 
 class ConvAttention(nn.Module):
+    supports_attn_return = True
+
     def __init__(self, dim, head_dim = 32, window_size = 5, qkv_bias=False, attn_drop=0., proj_drop=0.):
         super().__init__()
         assert dim % head_dim == 0, 'dim should be divisible by head_dim'
@@ -77,7 +85,7 @@ class ConvAttention(nn.Module):
         allowed = (dy <= half) & (dx <= half)
         return allowed
 
-    def forward(self, x):
+    def forward(self, x, return_attn=False):
         shape = x.shape
         if len(shape) == 4:
             B, C, H, W = shape
@@ -85,17 +93,18 @@ class ConvAttention(nn.Module):
             x = torch.flatten(x, start_dim=2).transpose(-2, -1)
         else:
             raise ValueError("convAttention expects [B, C, H, W] input for 2d local attention")
-        
+
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
-        
-        attn = (q*self.scale) @ k.transpose(-2, -1) 
+
+        attn = (q*self.scale) @ k.transpose(-2, -1)
 
         # apply masking right before softmax operation
         allowed = self.make_local_mask(H, W, self.window_size, x.device)
-        attn = attn.masked_fill(~allowed[None, None, :, :], float("-inf")) 
+        attn = attn.masked_fill(~allowed[None, None, :, :], float("-inf"))
 
         attn = attn.softmax(dim=-1)
+        attn_weights = attn  # [B, num_heads, N, N] — saved before dropout for visualization
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1,2).reshape(B, N, C)
@@ -103,6 +112,8 @@ class ConvAttention(nn.Module):
         x = self.proj_drop(x)
         x = x.transpose(-2, -1).reshape(B, C, H, W)
 
+        if return_attn:
+            return x, attn_weights
         return x
 
 
