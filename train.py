@@ -47,10 +47,10 @@ def setup(args):
     elif args.model == "vit":
         args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
                             attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
-    elif args.model == "local_vit":
+    elif args.model == "localvit":
         args.token_mixer = partial(TM.ConvAttention, head_dim=args.attn_head_dim, window_size=args.window_size, 
                             qkv_bias=args.attn_qkv_bias, attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
-    elif args.model == "MLP-Mixer":
+    elif args.model == "mlpmixer":
         args.token_mixer = partial(TM.MLPMixer, img_size=args.img_size, patch_size=args.patch_size,
                                     expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)                               
 
