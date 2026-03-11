@@ -191,7 +191,7 @@ def main():
         train(args, model, run=None)
     else:
         wandb_config = build_wandb_config(args)
-        with wandb.init(entity="snu-inductive-bias", project="exp1", name=run_name, config=wandb_config,) as run:
+        with wandb.init(entity="snu-inductive-bias", project=args.project, name=run_name, config=wandb_config,) as run:
             model = setup(args)
             train(args, model, run=run)
 

@@ -59,6 +59,7 @@ def get_parser():
     parser.add_argument("--fp16", action="store_true", help="enable mixed precision training (AMP fp16)")
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
     parser.add_argument("--no_wandb", action="store_true", help="disable Weights & Biases logging")
+    parser.add_argument("--project", type=str, default="exp1", help="W&B project name")
 
     # token-mixer specific
     # attention
