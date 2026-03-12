@@ -16,6 +16,9 @@ from functools import partial
 
 import os
 import warnings
+import datetime
+import shutil
+
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
@@ -130,6 +133,20 @@ def train(args, model, run=None):
 
         scheduler.step()
 
+        # Save checkpoint right after warmup ends
+        if epoch == args.warmup_epochs:
+            os.makedirs(args.output_path, exist_ok=True)
+            warmup_ckpt_path = os.path.join(args.output_path, "epoch_warmup_end.pt")
+            torch.save(model.state_dict(), warmup_ckpt_path)
+            print(f"[Checkpoint] warmup-end model saved to {warmup_ckpt_path}")
+
+        # Save model at every n*100 epochs (100, 200, 300, ...)
+        if epoch % 100 == 0:
+            os.makedirs(args.output_path, exist_ok=True)
+            epoch_ckpt_path = os.path.join(args.output_path, f"epoch_{epoch}.pt")
+            torch.save(model.state_dict(), epoch_ckpt_path)
+            print(f"[Checkpoint] epoch-{epoch} model saved to {epoch_ckpt_path}")
+
         current_lr = scheduler.get_last_lr()[0]
         if run is not None:
             run.log({"train/lr": current_lr, "epoch": epoch})
@@ -182,6 +199,28 @@ def main():
     args = parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args.seed)
+
+    # Build structured output directory: output/{project}/{model}-{start_time}
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    project_dir = os.path.join("output", args.project)
+    run_dir_name = f"{args.model}-{timestamp}"
+    run_dir = os.path.join(project_dir, run_dir_name)
+    os.makedirs(run_dir, exist_ok=True)
+
+    # Copy used config files into the run directory for reproducibility
+    if getattr(args, "base_config", None):
+        try:
+            shutil.copy(args.base_config, os.path.join(run_dir, "base.yaml"))
+        except OSError as e:
+            print(f"[Warning] Failed to copy base_config ({args.base_config}): {e}")
+    if getattr(args, "config", None):
+        try:
+            shutil.copy(args.config, os.path.join(run_dir, "config.yaml"))
+        except OSError as e:
+            print(f"[Warning] Failed to copy config ({args.config}): {e}")
+
+    # All checkpoints (best, warmup, periodic) will be saved under this directory
+    args.output_path = run_dir
 
     run_name = f"{args.model}_p{args.patch_size}"
 
