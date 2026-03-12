@@ -1,5 +1,6 @@
 import os
 import torch
+import wandb
 
 from utils.config import parse_args
 from utils.dataset import get_dataloader
@@ -21,6 +22,7 @@ def main():
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args.seed)
 
+    wandb.init(mode="disabled")
     model = setup(args)
 
     ckpt_path = os.path.join(args.output_path, "best.pt")
@@ -29,7 +31,7 @@ def main():
 
     _load_checkpoint(model, ckpt_path, args.device)
 
-    _, test_loader = get_dataloader(args)
+    _, test_loader, mixup_fn = get_dataloader(args)
     val_acc = validate(args, model, test_loader)
 
     print(f"[Val] checkpoint: {ckpt_path}")
