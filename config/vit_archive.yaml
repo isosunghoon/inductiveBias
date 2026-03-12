@@ -1,7 +1,6 @@
 # ===== ViT (global attention, patch_size=2) =====
 # base.yaml 대비 다른 값만 기재
 model: vit
-output_path: ./output/vit/
 
 patch_size: 2
 embed_dim: 256
