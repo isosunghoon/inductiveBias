@@ -58,6 +58,9 @@ class ConvAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+        self._cached_mask = None
+        self._cached_hw = None
+
     def make_local_mask(self, H: int, W: int, window_size: int, device=None):
         """
         Implementing 2d CSAN
@@ -89,11 +92,13 @@ class ConvAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         
-        attn = (q*self.scale) @ k.transpose(-2, -1) 
+        attn = (q*self.scale) @ k.transpose(-2, -1)
 
         # apply masking right before softmax operation
-        allowed = self.make_local_mask(H, W, self.window_size, x.device)
-        attn = attn.masked_fill(~allowed[None, None, :, :], float("-inf")) 
+        if self._cached_mask is None or self._cached_hw != (H, W) or self._cached_mask.device != x.device:
+            self._cached_mask = self.make_local_mask(H, W, self.window_size, x.device)
+            self._cached_hw = (H, W)
+        attn = attn.masked_fill(~self._cached_mask[None, None, :, :], float("-inf"))
 
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
