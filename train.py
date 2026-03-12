@@ -64,7 +64,7 @@ def setup(args):
                  use_layer_scale=args.use_layer_scale, layer_scale_init_value=args.layer_scale_init_value)
     model.to(args.device)
 
-    return model
+    return torch.compile(model)
 
 def train(args, model, run=None):
     # prepare dataset
