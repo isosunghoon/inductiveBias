@@ -222,7 +222,10 @@ def main():
     # All checkpoints (best, warmup, periodic) will be saved under this directory
     args.output_path = run_dir
 
-    run_name = f"{args.model}_p{args.patch_size}"
+    if args.run_name == 'XXXXX':
+        run_name = f"{args.model}"
+    else:
+        run_name = f"{args.run_name}"
 
     if args.no_wandb:
         run = None

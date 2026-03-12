@@ -60,6 +60,7 @@ def get_parser():
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
     parser.add_argument("--no_wandb", action="store_true", help="disable Weights & Biases logging")
     parser.add_argument("--project", type=str, default="exp1", help="W&B project name")
+    parser.add_argument("--run_name", type=str, default="XXXXX", help="W&B run name")
 
     # token-mixer specific
     # attention
@@ -94,14 +95,24 @@ def _apply_yaml(args, path):
 
 
 def parse_args():
+    # Parse only config paths first so we know which YAML files to load.
+    config_path_parser = argparse.ArgumentParser(add_help=False)
+    config_path_parser.add_argument("--base_config", type=str, default="./config/base.yaml")
+    config_path_parser.add_argument("--config", type=str, default=None)
+    config_paths, _ = config_path_parser.parse_known_args()
+
     parser = get_parser()
+
+    # Start from argparse defaults.
+    defaults = parser.parse_args([])
+
+    # Apply YAML defaults (base first, then model-specific override).
+    if config_paths.base_config is not None:
+        _apply_yaml(defaults, config_paths.base_config)
+    if config_paths.config is not None:
+        _apply_yaml(defaults, config_paths.config)
+
+    # Re-parse real CLI last so CLI has highest priority.
+    parser.set_defaults(**vars(defaults))
     args = parser.parse_args()
-
-    # Load order: base_config first, then model-specific config overrides it.
-    if args.base_config is not None:
-        _apply_yaml(args, args.base_config)
-
-    if args.config is not None:
-        _apply_yaml(args, args.config)
-
     return args
