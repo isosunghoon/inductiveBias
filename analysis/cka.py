@@ -46,13 +46,13 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
     hooks = []
 
     for i, layer in enumerate(layers_1):
-        hooks.append(layer.register_forward_hook(catcher_1.outputs(f"feat{i}")))
+        hooks.append(layer.register_forward_hook(catcher_1.hook(f"feat{i}")))
     for i, layer in enumerate(layers_2):
-        hooks.append(layer.register_forward_hook(catcher_2.outputs(f"feat{i}")))
+        hooks.append(layer.register_forward_hook(catcher_2.hook(f"feat{i}")))
         
     # Per-layer feature storage
-    feats_1 = {i: [] for i in range(layers_1)}
-    feats_2 = {j: [] for j in range(layers_2)}
+    feats_1 = {i: [] for i in range(len(layers_1))}
+    feats_2 = {j: [] for j in range(len(layers_2))}
 
     for i, batch in enumerate(dataloader):
         x, _ = batch
@@ -66,17 +66,17 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
             f1 = flatten_features(catcher_1.outputs[f"feat{i}"]).cpu()
             feats_1[i].append(f1)
 
-        catcher_2.outputs_clear()
+        catcher_2.outputs.clear()
         _ = model_2(x)
-        for j in range(len(layers_2)):
-            f2 = flatten_features(catcher_2.outputs[f"feat{j}"]).cpu()
+        for i in range(len(layers_2)):
+            f2 = flatten_features(catcher_2.outputs[f"feat{i}"]).cpu()
             feats_2[i].append(f2)
         
     for h in hooks:
         h.remove()
 
-    feats_1 = {i: torch.cat(feats_1[i], dim=0) for i in range(layers_1)}
-    feats_2 = {i: torch.cat(feats_2[i], dim=0) for i in range(layers_2)}
+    feats_1 = {i: torch.cat(feats_1[i], dim=0) for i in range(len(layers_1))}
+    feats_2 = {i: torch.cat(feats_2[i], dim=0) for i in range(len(layers_2))}
 
     cka_matrix = torch.empty(len(layers_1), len(layers_2), dtype=torch.float32)
 
@@ -112,9 +112,9 @@ def _parse_args():
     # Create args2
     args2 = copy.deepcopy(defaults)
     if config_paths.base_config is not None:
-        _apply_yaml(args1, config_paths.base_config)
+        _apply_yaml(args2, config_paths.base_config)
     if config_paths.config2 is not None:
-        _apply_yaml(defaults, config_paths.config2)
+        _apply_yaml(args2, config_paths.config2)
 
     return args1, args2
 
@@ -151,10 +151,10 @@ def main():
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path2}")
     _load_checkpoint(model2, ckpt_path2, args2.device)
 
-    _, test_loader, mixup_fn1 = get_dataloader(args1)
+    _, test_loader, _ = get_dataloader(args1)
 
     """
-    -> print each model's layers name
+    # print each model's layers name: 
     print(f"model1: layers name")
     for name, module in model1.named_modules():
         print(name)
@@ -164,10 +164,14 @@ def main():
         print(name)
     """
 
-    layers1 = []
-    layers2 = []
-    # cka_matrix = compare_cka(model1, layers1, model2, layers2, test_loader)
+    # TODO: Layers1과 Layers2에 실험을 돌리기 적합한 layer 찾아넣기
+    layers1 = [model1.patch_embed, model1.blocks[0], model1.blocks[1]]
+    layers2 = [model2.patch_embed, model2.blocks[0], model2.blocks[1]]
+    cka_matrix = compare_cka(args1, model1, layers1, model2, layers2, test_loader)
 
+    print("CKA matrix:")
+    print(cka_matrix)
+    print("shape:", cka_matrix.shape)
 
         
 
