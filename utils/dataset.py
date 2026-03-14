@@ -3,7 +3,7 @@ import random
 import numpy as np
 import torch
 from torchvision import transforms, datasets
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
@@ -197,3 +197,52 @@ def get_dataloader(args):
             )
 
         return train_loader, test_loader, mixup_fn
+
+    raise ValueError(f"Unknown dataset: {args.dataset}")
+
+
+def make_subset_loader(args, train_loader, ratio):
+    """
+    Build a DataLoader over a random subset of the training set.
+    Uses RASampler when args.augment == 'strong', else shuffle=True.
+    batch_size: if None, uses args.train_batch_size (e.g. use 1 for ERF so each step = one image).
+    """
+    dataset = train_loader.dataset
+    n = max(1, int(len(dataset) * ratio))
+    indices = np.random.choice(len(dataset), n, replace=False)
+    subset = Subset(dataset, indices)
+
+    bs = args.train_batch_size
+    common_loader_kwargs = {
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+        "persistent_workers": args.num_workers > 0,
+    }
+    if args.num_workers > 0:
+        common_loader_kwargs["prefetch_factor"] = 4
+
+    if getattr(args, "augment", "none") == "strong":
+        sampler = RASampler(subset, num_repeats=3, shuffle=True)
+        return DataLoader(
+            subset,
+            batch_size=bs,
+            sampler=sampler,
+            **common_loader_kwargs,
+        )
+    return DataLoader(
+        subset,
+        batch_size=bs,
+        shuffle=True,
+        **common_loader_kwargs,
+    )
+
+# 굳이 이정도까지? 
+# def get_dataloader_with_subset(args, ratio):
+#     """
+#     Convenience: get_dataloader(args) + make_subset_loader on train.
+#     Returns:
+#         train_loader, test_loader, mixup_fn, subset_loader
+#     """
+#     train_loader, test_loader, mixup_fn = get_dataloader(args)
+#     subset_loader = make_subset_loader(args, train_loader, ratio)
+#     return train_loader, test_loader, mixup_fn, subset_loader

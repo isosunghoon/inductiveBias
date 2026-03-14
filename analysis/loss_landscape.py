@@ -2,13 +2,10 @@ import os
 import warnings
 import torch
 import numpy as np
-import wandb
 
 from utils.config import parse_args
-from utils.dataset import get_dataloader, RASampler
-from train import setup, set_seed
-
-from torch.utils.data import DataLoader, Subset
+from utils.dataset import get_dataloader, make_subset_loader
+from utils.build_model import build_model
 from pyhessian import hessian
 from tqdm import tqdm
 
@@ -22,45 +19,6 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-def load_checkpoint(model, ckpt_path, device):
-    checkpoint = torch.load(ckpt_path, map_location=device)
-
-    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    else:
-        state_dict = checkpoint
-
-    model.load_state_dict(state_dict)
-
-def make_subset(args, train_loader, ratio):
-    dataset = train_loader.dataset
-    n = max(1, int(len(dataset) * ratio))
-    indices = np.random.choice(len(dataset), n, replace=False)
-    subset = Subset(dataset, indices)
-
-    common_loader_kwargs = {
-        "num_workers": args.num_workers,
-        "pin_memory": True,
-        "persistent_workers": args.num_workers > 0,
-    }
-    if args.num_workers > 0:
-        common_loader_kwargs["prefetch_factor"] = 4
-
-    if args.augment == 'strong':
-        sampler = RASampler(subset, num_repeats=3, shuffle=True)
-        return DataLoader(
-            subset,
-            batch_size=args.train_batch_size,
-            sampler=sampler,
-            **common_loader_kwargs,
-        )
-    else:
-        return DataLoader(
-            subset,
-            batch_size=args.train_batch_size,
-            shuffle=True,
-            **common_loader_kwargs,
-        )
 
 def calc_loss_landscape(args, model, loader, mixup_fn):
     model.train()
@@ -89,24 +47,16 @@ def calc_loss_landscape(args, model, loader, mixup_fn):
     return res
 
 def main():
-    # 0. parse args
     args = parse_args()
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
-    set_seed(args.seed)
     args.fp16 = ENABLE_FP16
     args.train_batch_size = BATCH_SIZE
 
-    # 1. prepare model
-    wandb.init(mode="disabled")
-    model = setup(args)
-    ckpt_path = os.path.join(args.output_path, "best.pt")
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    load_checkpoint(model, ckpt_path, args.device)
+    # 1. prepare model (build_model: setup + load best.pt; unwrap compile for pyhessian)
+    model = build_model(args)
 
-    # 2. prepare dataset
+    # 2. prepare dataset (train/test/mixup + subset loader for Hessian)
     train_loader, test_loader, mixup_fn = get_dataloader(args)
-    loader = make_subset(args, train_loader, ratio = RATIO)
+    loader = make_subset_loader(args, train_loader, ratio=RATIO)
 
     # 3. calculate eigenvalues
     evs = calc_loss_landscape(args, model, loader, mixup_fn)
