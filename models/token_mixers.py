@@ -183,14 +183,47 @@ class MLPMixer(nn.Module):
             x = x.transpose(-2, -1).reshape(B, C, H, W)
         return x
 
-
 # poolFormer Implementation
 class PoolFormer(nn.Module):
     def __init__(self, dim, pool_size=3, stride=1):
         super().__init__()
-        self.pool = nn.AvgPool2d(
-            pool_size, stride=stride, padding=pool_size//2, count_include_pad=False
-        )
+        self.pool = nn.AvgPool2d(pool_size, stride=stride, padding=pool_size//2, count_include_pad=False)
     
     def forward(self, x):
         return self.pool(x) - x
+
+# implement convformer
+class ConvFormer(nn.Module):
+    def __init__(self, dim, kernel_size=3, stride=1):
+        super().__init__()
+        self.conv = nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2, groups=dim,)
+
+    def forward(self, x):
+        return self.conv(x)
+
+# implement denseformer
+class DenseFormer(nn.Module):
+    def __init__(self, dim, img_size=32, patch_size=2, expansion_factor=2, mixer_drop=0.5):
+        # num_patches = N
+        # dim = C
+        super().__init__()
+        assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
+        num_patches = (img_size // patch_size) ** 2
+        self.dim = dim
+        self.expansion_factor = expansion_factor
+        self.mixer_drop = mixer_drop
+        self.token_mixer = TokenMixer(num_patches, dim, self.expansion_factor, self.mixer_drop)
+        
+    def forward(self, x):
+        shape = x.shape
+        if len(shape) == 4:
+            B, C, H, W = shape
+            N = H * W
+            x = torch.flatten(x, start_dim=2).transpose(-2, -1)
+        else:
+            B, N, C = shape
+        x = self.token_mixer(x)
+
+        if len(shape) == 4:
+            x = x.transpose(-2, -1).reshape(B, C, H, W)
+        return x
