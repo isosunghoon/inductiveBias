@@ -41,6 +41,10 @@ def setup(args):
         args.norm_layer = nn.Identity
     elif args.norm_layer == 'layernorm':
         args.norm_layer = NL.LayerNorm
+    elif args.norm_layer == 'batchnorm':
+        args.norm_layer = NL.BatchNorm
+    elif args.norm_layer == 'groupnorm':
+        args.norm_layer = NL.GroupNorm
 
     if args.act_layer == 'GELU':
         args.act_layer = nn.GELU
