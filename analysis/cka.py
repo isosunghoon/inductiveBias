@@ -4,6 +4,9 @@ import os
 import wandb
 import argparse
 import copy
+import datetime
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 from utils.config import get_parser, _apply_yaml
 from utils.dataset import get_dataloader
@@ -129,6 +132,65 @@ def _load_checkpoint(model, ckpt_path, device):
     model.load_state_dict(state_dict)
 
 
+def _layer_labels(n):
+    """Generate tick labels: ['patch_embed', 'block_0', 'block_1', ...]"""
+    return ["patch_embed"] + [f"block_{i}" for i in range(n - 1)]
+
+
+def save_cka_results(cka_matrix, model1_name, model2_name):
+    out_dir = os.path.join(os.path.dirname(__file__), "cka_results")
+    os.makedirs(out_dir, exist_ok=True)
+
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    stem = f"{model1_name}_vs_{model2_name}_{timestamp}"
+
+    # --- .txt ---
+    txt_path = os.path.join(out_dir, f"{stem}.txt")
+    mat = cka_matrix.numpy()
+    with open(txt_path, "w") as f:
+        f.write(f"CKA matrix  ({model1_name} vs {model2_name})\n")
+        f.write(f"shape: {mat.shape[0]} x {mat.shape[1]}  "
+                f"(rows=model1 layers, cols=model2 layers)\n\n")
+        header = "\t".join(_layer_labels(mat.shape[1]))
+        f.write(f"\t{header}\n")
+        for i, row_label in enumerate(_layer_labels(mat.shape[0])):
+            vals = "\t".join(f"{v:.4f}" for v in mat[i])
+            f.write(f"{row_label}\t{vals}\n")
+    print(f"[CKA] txt  saved → {txt_path}")
+
+    # --- heatmap ---
+    n_rows, n_cols = mat.shape
+    fig_w = max(6, n_cols * 0.7)
+    fig_h = max(5, n_rows * 0.7)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+    im = ax.imshow(mat, vmin=0.0, vmax=1.0, cmap="magma", aspect="auto")
+    plt.colorbar(im, ax=ax, label="CKA similarity")
+
+    col_labels = _layer_labels(n_cols)
+    row_labels = _layer_labels(n_rows)
+    ax.set_xticks(range(n_cols))
+    ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(n_rows))
+    ax.set_yticklabels(row_labels, fontsize=8)
+
+    ax.set_xlabel(f"Model 2: {model2_name}", fontsize=10)
+    ax.set_ylabel(f"Model 1: {model1_name}", fontsize=10)
+    ax.set_title(f"Linear CKA  ({model1_name} vs {model2_name})", fontsize=11)
+
+    # annotate cells
+    for i in range(n_rows):
+        for j in range(n_cols):
+            ax.text(j, i, f"{mat[i, j]:.2f}", ha="center", va="center",
+                    fontsize=6, color="white" if mat[i, j] < 0.6 else "black")
+
+    plt.tight_layout()
+    png_path = os.path.join(out_dir, f"{stem}.png")
+    fig.savefig(png_path, dpi=150)
+    plt.close(fig)
+    print(f"[CKA] plot saved → {png_path}")
+
+
 def main():
     args1, args2 = _parse_args()
     wandb.init(mode="disabled")
@@ -164,16 +226,18 @@ def main():
         print(name)
     """
 
-    # TODO: Layers1과 Layers2에 실험을 돌리기 적합한 layer 찾아넣기
-    layers1 = [model1.patch_embed, model1.blocks[0], model1.blocks[1]]
-    layers2 = [model2.patch_embed, model2.blocks[0], model2.blocks[1]]
+    # patch_embed + all MetaFormerBlocks — covers full representation trajectory.
+    # Change the layers part if you want to make different experiments
+    layers1 = [model1.patch_embed] + list(model1.blocks)
+    layers2 = [model2.patch_embed] + list(model2.blocks)
     cka_matrix = compare_cka(args1, model1, layers1, model2, layers2, test_loader)
 
     print("CKA matrix:")
     print(cka_matrix)
     print("shape:", cka_matrix.shape)
 
-        
+    save_cka_results(cka_matrix.cpu(), args1.model, args2.model)
+
 
 if __name__ == "__main__":
     main()
