@@ -1,0 +1,11 @@
+# ===== token mixer =====
+model: convformer2
+drop_rate: 0.0
+drop_path: 0.2
+add_pos_emb: true
+use_layer_scale: true
+
+optimizer: adamw
+learning_rate: 8e-4
+weight_decay: 0.02
+label_smoothing: 0

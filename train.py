@@ -64,6 +64,8 @@ def setup(args):
         args.token_mixer = partial(TM.PoolFormer, pool_size=args.pool_size, stride=args.stride)
     elif args.model == "convformer":
         args.token_mixer = partial(TM.ConvFormer, kernel_size=args.kernel_size, stride=args.stride)
+    elif args.model == "convformer2":
+        args.token_mixer = TM.ConvFormer2
     elif args.model == "denseformer":
         args.token_mixer = partial(TM.DenseFormer, img_size=args.img_size, patch_size=args.patch_size,
                                     expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)    

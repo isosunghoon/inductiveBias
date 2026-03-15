@@ -201,6 +201,40 @@ class ConvFormer(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
+
+class SEModule(nn.Module):
+    def __init__(self, dim, rd_ratio=0.25):
+        super().__init__()
+        hidden_dim = max(16, int(dim * rd_ratio))
+        self.fc1 = nn.Conv2d(dim, hidden_dim, 1, bias=True)
+        self.act = nn.GELU()
+        self.fc2 = nn.Conv2d(hidden_dim, dim, 1, bias=True)
+        self.gate = nn.Sigmoid()
+
+    def forward(self, x):
+        scale = x.mean((2, 3), keepdim=True)
+        scale = self.fc2(self.act(self.fc1(scale)))
+        return x * self.gate(scale)
+
+
+class ConvFormer2(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dw3 = nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
+        self.dw5 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim, bias=False)
+        self.dw_d2 = nn.Conv2d(dim, dim, 3, padding=2, dilation=2, groups=dim, bias=False)
+        # Keep fusion light because the following MetaFormer MLP already mixes channels.
+        self.fuse = nn.Conv2d(dim * 3, dim, 1, bias=False)
+        self.act = nn.GELU()
+        self.se = SEModule(dim, rd_ratio=0.25)
+
+    def forward(self, x):
+        x = torch.cat((self.dw3(x), self.dw5(x), self.dw_d2(x)), dim=1)
+        x = self.fuse(x)
+        x = self.act(x)
+        x = self.se(x)
+        return x
+
 # implement denseformer
 class DenseFormer(nn.Module):
     def __init__(self, dim, img_size=32, patch_size=2, expansion_factor=2, mixer_drop=0.5):
