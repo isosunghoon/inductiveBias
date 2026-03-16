@@ -50,7 +50,7 @@ def get_parser():
     # validation 관련
     parser.add_argument("--eval_interval", type=int, default=5, help="run validation every N epochs")
     parser.add_argument("--save_best", action="store_true", help="save best model by val acc")
-    parser.add_argument("--output_path", type=str, default="./out", help="output path")
+    parser.add_argument("--output_path", type=str, default="./output", help="output path")
 
     # 기타
     parser.add_argument("--num_classes", type=int, default=100, help="number of classes")
