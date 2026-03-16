@@ -6,6 +6,7 @@ import torch.nn as nn
 from models.metaformer import MetaFormer
 import models.token_mixers as TM
 import models.norm_layers as NL
+from models.sam import SAM
 
 from utils.config import parse_args
 from utils.dataset import get_dataloader
@@ -13,6 +14,8 @@ from utils.dataset import get_dataloader
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from functools import partial
+
+
 
 import os
 import warnings
@@ -86,7 +89,12 @@ def train(args, model, run=None):
         optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
     elif args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
+    elif args.optimizer == "sam":
+        base_optimizer = torch.optim.AdamW
+        optimizer = SAM(model.parameters(), base_optimizer, lr=args.learning_rate, weight_decay=args.weight_decay,)
     
+    use_sam = isinstance(optimizer, SAM)
+
     if args.decay_type == "cosine":
         warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
         main_scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs - args.warmup_epochs)
@@ -124,18 +132,48 @@ def train(args, model, run=None):
             running_loss += loss.detach()
             global_step += 1
 
-            if args.fp16:
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.step()
+            if use_sam:
+                # SAM: 두 번의 forward-backward 패스, batchnorm 사용하는 경우에는 enable_running_stats/disable_running stats 사용 필요
+                if args.fp16:
+                    # 1) first step
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.first_step(zero_grad=True)
 
-            optimizer.zero_grad()
+                    # 2) second step - 새로운 forward/backward
+                    with torch.amp.autocast('cuda', enabled=args.fp16):
+                        logits2 = model(x)
+                        loss2 = torch.nn.functional.cross_entropy(logits2, y, label_smoothing=args.label_smoothing)
+                    scaler.scale(loss2).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.second_step(zero_grad=True)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.first_step(zero_grad=True)
+
+                    logits2 = model(x)
+                    loss2 = torch.nn.functional.cross_entropy(logits2, y, label_smoothing=args.label_smoothing)
+                    loss2.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.second_step(zero_grad=True)
+            else:
+                # 일반 옵티마이저 경로 (SGD / AdamW)
+                if args.fp16:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.step()
+
+                optimizer.zero_grad()
 
             if step % args.log_interval == 0:
                 avg_loss = (running_loss / (step + 1)).item()
