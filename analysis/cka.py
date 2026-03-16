@@ -201,7 +201,7 @@ def main():
     set_seed(args1.seed)
     
     model1 = setup(args1)
-    ckpt_path1 = os.path.join(args1.output_path, "base_model_exp/mlpmixer-2026-03-13_02-56-40/")
+    ckpt_path1 = os.path.join(args1.output_path, "base_model_exp/mlpmixer-2026-03-13_02-56-40/best.pt")
     if not os.path.exists(ckpt_path1):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path1}")
     _load_checkpoint(model1, ckpt_path1, args1.device)
@@ -210,7 +210,7 @@ def main():
     set_seed(args2.seed)
     
     model2 = setup(args2)
-    ckpt_path2 = os.path.join(args2.output_path, "base_model_exp/vit-2026-03-12_15-39-12/")
+    ckpt_path2 = os.path.join(args2.output_path, "base_model_exp/vit-2026-03-12_15-39-12/best.pt")
     if not os.path.exists(ckpt_path2):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path2}")
     _load_checkpoint(model2, ckpt_path2, args2.device)
