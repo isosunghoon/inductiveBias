@@ -1,6 +1,9 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 import torch.nn as nn
-import os
 import wandb
 import argparse
 import copy
@@ -61,19 +64,18 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
         x, _ = batch
         x = x.to(args.device)
 
-        catcher_1.outputs.clear()
-
         # model_1를 실행하면서 자동으로 hook이 연산됨
+        catcher_1.outputs.clear()
         _ = model_1(x)
-        for i in range(len(layers_1)):
+        for j in range(len(layers_1)):
             f1 = flatten_features(catcher_1.outputs[f"feat{i}"]).cpu()
-            feats_1[i].append(f1)
+            feats_1[j].append(f1)
 
         catcher_2.outputs.clear()
         _ = model_2(x)
-        for i in range(len(layers_2)):
+        for j in range(len(layers_2)):
             f2 = flatten_features(catcher_2.outputs[f"feat{i}"]).cpu()
-            feats_2[i].append(f2)
+            feats_2[j].append(f2)
         
     for h in hooks:
         h.remove()
