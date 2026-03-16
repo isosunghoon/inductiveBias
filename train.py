@@ -92,7 +92,9 @@ def train(args, model, run=None):
     elif args.optimizer == "sam":
         base_optimizer = torch.optim.AdamW
         optimizer = SAM(model.parameters(), base_optimizer, lr=args.learning_rate, weight_decay=args.weight_decay,)
-    
+        # SAM은 두 번의 forward/backward를 사용하므로 GradScaler/AMP와 함께 쓰면 unscale_ 호출이 복잡해진다.
+        # 구현 단순성과 안정성을 위해 SAM을 쓸 때는 항상 fp32로 학습하도록 강제한다.
+        args.fp16 = False
     use_sam = isinstance(optimizer, SAM)
 
     if args.decay_type == "cosine":
