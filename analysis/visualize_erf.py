@@ -4,6 +4,7 @@
 # Licensed under The MIT License [see LICENSE for details]
 # --------------------------------------------------------'
 import argparse
+import os
 import matplotlib.pyplot as plt
 plt.rcParams["font.family"] = "Times New Roman"
 import seaborn as sns
@@ -17,37 +18,24 @@ params = {'axes.titlesize': large,
           'ytick.labelsize': med,
           'figure.titlesize': large}
 plt.rcParams.update(params)
-plt.style.use('seaborn-whitegrid')
+plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_style("white")
 plt.rc('font', **{'family': 'Times New Roman'})
 plt.rcParams['axes.unicode_minus'] = False
 
-
-parser = argparse.ArgumentParser('Script for analyzing the ERF', add_help=False)
-parser.add_argument('--source', default='temp.npy', type=str, help='path to the contribution score matrix (.npy file)')
-parser.add_argument('--heatmap_save', default='heatmap.png', type=str, help='where to save the heatmap')
-args = parser.parse_args()
-
 import numpy as np
+from analysis.erf import make_erf
 
 def heatmap(data, camp='RdYlGn', figsize=(10, 10.75), ax=None, save_path=None):
     plt.figure(figsize=figsize, dpi=40)
 
-    ax = sns.heatmap(data,
-                xticklabels=False,
-                yticklabels=False, cmap=camp,
-                center=0, annot=False, ax=ax, cbar=False, annot_kws={"size": 24}, fmt='.2f')
-    #   =========================== Add a **nicer** colorbar on top of the figure. Works for matplotlib 3.3. For later versions, use matplotlib.colorbar
-    #   =========================== or you may simply ignore these and set cbar=True in the heatmap function above.
-    from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
-    from mpl_toolkits.axes_grid1.colorbar import colorbar
-    ax_divider = make_axes_locatable(ax)
-    cax = ax_divider.append_axes('top', size='5%', pad='2%')
-    colorbar(ax.get_children()[0], cax=cax, orientation='horizontal')
-    cax.xaxis.set_ticks_position('top')
-    #   ================================================================
-    #   ================================================================
-    plt.savefig(save_path)
+    # axes_grid1 / custom colorbar 없이, seaborn 기본 colorbar만 사용 (cbar=True)
+    ax = sns.heatmap(data, xticklabels=False, yticklabels=False, cmap=camp, center=0,
+        annot=False, ax=ax, cbar=True, annot_kws={"size": 24}, fmt='.2f',)
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path)
 
 
 def get_rectangle(data, thresh):
@@ -61,8 +49,8 @@ def get_rectangle(data, thresh):
     return None
 
 
-def analyze_erf(args):
-    data = np.load(args.source)
+def analyze_erf(npy_path, save_image_path):
+    data = np.load(npy_path)
     print(np.max(data))
     print(np.min(data))
     data = np.log10(data + 1)       #   the scores differ in magnitude. take the logarithm for better readability
@@ -75,9 +63,42 @@ def analyze_erf(args):
         else:
             side_length, area_ratio = result
             print('thresh, rectangle side length, area ratio: ', thresh, side_length, area_ratio)
-    heatmap(data, save_path=args.heatmap_save)
-    print('heatmap saved at ', args.heatmap_save)
+    heatmap(data, save_path=save_image_path)
+    print('heatmap saved at ', save_path)
 
+
+def visualize_erf(save_path):
+    """
+    save_path: 모델 체크포인트와 yaml 들이 있는 폴더 경로.
+               이 폴더 안에 'erf.npy'와 'erf.png'를 생성한다.
+    """
+    os.makedirs(save_path, exist_ok=True)
+    npy_path = make_erf(save_path)
+    png_path = os.path.join(save_path, "erf.png")
+    analyze_erf(npy_path, png_path)
+
+
+def main():
+    """
+    args.project: output 폴더 내의 프로젝트 이름 (예: 'base_model_exp')
+                  실제 경로는 'output/{project}' 로 간주하고,
+                  그 안의 모든 하위 폴더에 대해 visualize_erf를 실행한다.
+    """
+    parser = argparse.ArgumentParser('Script for making & visualizing the ERF for all runs in a project', add_help=False)
+    parser.add_argument('--project', type=str, required=True, help="output 폴더 내의 프로젝트 이름 (예: 'base_model_exp')",)
+    args = parser.parse_args()
+
+    project_root = os.path.join('output', args.project)
+    if not os.path.isdir(project_root):
+        raise FileNotFoundError(f"Project directory not found: {project_root}")
+
+    # project_root 아래의 모든 디렉터리에 대해 visualize_erf 실행
+    for name in sorted(os.listdir(project_root)):
+        run_dir = os.path.join(project_root, name)
+        if not os.path.isdir(run_dir):
+            continue
+        print(f"=== Visualizing ERF for run: {run_dir} ===")
+        visualize_erf(run_dir)
 
 if __name__ == '__main__':
-    analyze_erf(args)
+    main()

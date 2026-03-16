@@ -11,8 +11,8 @@ import types
 import torch
 from timm.utils import AverageMeter
 from torchvision import datasets, transforms
-from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from PIL import Image
+from tqdm import tqdm
 # from erf.resnet_for_erf import resnet101, resnet152
 # from erf.replknet_for_erf import RepLKNetForERF
 from torch import optim as optim
@@ -23,7 +23,7 @@ from utils.build_model import build_model
 
 RATIO = 0.05  # subset ratio of train set when NUM_IMAGES is None
 BATCH_SIZE = 1
-NUM_IMAGES = None  # if None: use full subset from ratio; else: stop after this many images
+NUM_IMAGES = 100  # if None: use full subset from ratio; else: stop after this many images
 
 # 새로운 forward 함수 정의 (ERF 측정용: GAP 제거 버전)
 def erf_forward(self, x):
@@ -51,9 +51,17 @@ def get_input_grad(model, samples):
     grad_map = aggregated.cpu().numpy()
     return grad_map
 
-def main():
+def make_erf(save_path=None):
     args = parse_args()
     args.train_batch_size = BATCH_SIZE
+
+    if save_path is not None:
+        # 모델 체크포인트 및 yaml 파일 저장된 폴더의 경로
+        args.output_path = save_path
+
+    # output_path 아래에 config 들이 있다고 가정
+    args.base_config = os.path.join(args.output_path, "base.yaml")
+    args.config = os.path.join(args.output_path, "config.yaml")
 
     model = build_model(args)
     model = getattr(model, "_orig_mod", model)  # unwrap torch.compile if present
@@ -72,7 +80,14 @@ def main():
     meter = AverageMeter()
     optimizer.zero_grad()
 
-    for _, (samples, _) in enumerate(sample_loader):
+    iterable = sample_loader
+    if NUM_IMAGES is not None:
+        # NUM_IMAGES가 설정되면 tqdm total을 그 값으로 두고, 아니면 전체 서브셋 크기를 사용합니다.
+        total = min(NUM_IMAGES, len(sample_loader.dataset))
+    else:
+        total = len(sample_loader.dataset)
+
+    for samples, _ in tqdm(iterable, total=total, desc="Computing ERF"):
         if NUM_IMAGES is not None and meter.count >= NUM_IMAGES:
             break
         samples = samples.cuda(non_blocking=True)
@@ -85,11 +100,12 @@ def main():
             continue
         meter.update(contribution_scores)
 
-    save_path = os.path.join(args.output_path, "erf.npy")
+    erf_npy_path = os.path.join(args.output_path, "erf.npy")
     os.makedirs(args.output_path, exist_ok=True)
-    np.save(save_path, meter.avg)
-    print(f"Saved ERF matrix to {save_path} (avg over {meter.count} images)")
+    np.save(erf_npy_path, meter.avg)
+    print(f"Saved ERF matrix to {erf_npy_path} (avg over {meter.count} images)")
+    return erf_npy_path
 
 
 if __name__ == '__main__':
-    main()
+    make_erf()

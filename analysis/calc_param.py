@@ -9,11 +9,8 @@ from train import set_seed, setup
 
 
 MODEL_CONFIGS = {
-    "identity": "config/identity.yaml",
-    "vit": "config/vit.yaml",
-    "localvit": "config/localvit.yaml",
-    "mlpmixer": "config/mlpmixer.yaml",
-    "poolformer": "config/poolformer.yaml",
+    "convformer1": "output/base_model_exp/convformer-2026-03-14_05-12-40/config.yaml",
+    "vit": "output/base_model_exp/convformer-2026-03-14_06-59-45/config.yaml",
 }
 
 
