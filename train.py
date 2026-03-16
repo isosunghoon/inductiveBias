@@ -2,6 +2,7 @@ import torch
 import random
 import numpy as np
 import torch.nn as nn
+import yaml
 
 from models.metaformer import MetaFormer
 import models.token_mixers as TM
@@ -17,7 +18,6 @@ from functools import partial
 import os
 import warnings
 import datetime
-import shutil
 
 warnings.filterwarnings(
     "ignore",
@@ -218,20 +218,14 @@ def main():
     run_dir = os.path.join(project_dir, run_dir_name)
     os.makedirs(run_dir, exist_ok=True)
 
-    # Copy used config files into the run directory for reproducibility
-    if getattr(args, "base_config", None):
-        try:
-            shutil.copy(args.base_config, os.path.join(run_dir, "base.yaml"))
-        except OSError as e:
-            print(f"[Warning] Failed to copy base_config ({args.base_config}): {e}")
-    if getattr(args, "config", None):
-        try:
-            shutil.copy(args.config, os.path.join(run_dir, "config.yaml"))
-        except OSError as e:
-            print(f"[Warning] Failed to copy config ({args.config}): {e}")
-
     # All checkpoints (best, warmup, periodic) will be saved under this directory
     args.output_path = run_dir
+
+    # Save the fully resolved training configuration (after YAML + CLI) as a single config.yaml
+    config_path = os.path.join(run_dir, "config.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(vars(args), f, sort_keys=False, allow_unicode=True)
+    print(f"[Config] Full training config saved to {config_path}")
 
     if args.run_name == 'XXXXX':
         run_name = f"{args.model}"
