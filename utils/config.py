@@ -98,12 +98,17 @@ def _apply_yaml(args, path):
         setattr(args, k, v)
 
 
-def parse_args():
-    # Parse only config paths first so we know which YAML files to load.
+def parse_args(argv=None):
+    """
+    Parse args from CLI or from a list of strings (e.g. from code).
+    When argv is None, uses sys.argv (normal CLI). When argv is a list,
+    uses that as the argument list (e.g. parse_args(['--config', 'path.yaml'])).
+    argv는 base_config와 config의 path를 넘기는 용도. 
+    """
     config_path_parser = argparse.ArgumentParser(add_help=False)
     config_path_parser.add_argument("--base_config", type=str, default="./config/base.yaml")
     config_path_parser.add_argument("--config", type=str, default=None)
-    config_paths, _ = config_path_parser.parse_known_args()
+    config_paths, _ = config_path_parser.parse_known_args(argv)
 
     parser = get_parser()
 
@@ -111,12 +116,12 @@ def parse_args():
     defaults = parser.parse_args([])
 
     # Apply YAML defaults (base first, then model-specific override).
-    if config_paths.base_config is not None:
+    if config_paths.base_config is not None and os.path.exists(config_paths.base_config):
         _apply_yaml(defaults, config_paths.base_config)
     if config_paths.config is not None:
         _apply_yaml(defaults, config_paths.config)
 
-    # Re-parse real CLI last so CLI has highest priority.
+    # Re-parse real CLI (or provided argv) last so it has highest priority.
     parser.set_defaults(**vars(defaults))
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     return args

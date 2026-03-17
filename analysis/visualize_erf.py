@@ -6,7 +6,7 @@
 import argparse
 import os
 import matplotlib.pyplot as plt
-plt.rcParams["font.family"] = "Times New Roman"
+# plt.rcParams["font.family"] = "Times New Roman"
 import seaborn as sns
 #   Set figure parameters
 large = 24; med = 24; small = 24
@@ -64,7 +64,7 @@ def analyze_erf(npy_path, save_image_path):
             side_length, area_ratio = result
             print('thresh, rectangle side length, area ratio: ', thresh, side_length, area_ratio)
     heatmap(data, save_path=save_image_path)
-    print('heatmap saved at ', save_path)
+    print('heatmap saved at ', save_image_path)
 
 
 def visualize_erf(save_path):
@@ -92,13 +92,17 @@ def main():
     if not os.path.isdir(project_root):
         raise FileNotFoundError(f"Project directory not found: {project_root}")
 
-    # project_root 아래의 모든 디렉터리에 대해 visualize_erf 실행
+    # project_root 아래의 모든 디렉터리에 대해 visualize_erf 실행 (에러 시 해당 폴더만 건너뛰고 계속)
     for name in sorted(os.listdir(project_root)):
         run_dir = os.path.join(project_root, name)
         if not os.path.isdir(run_dir):
             continue
         print(f"=== Visualizing ERF for run: {run_dir} ===")
-        visualize_erf(run_dir)
+        try:
+            visualize_erf(run_dir)
+        except Exception as e:
+            print(f"[Error] Failed for folder: {run_dir}\n  {type(e).__name__}: {e}")
+            continue
 
 if __name__ == '__main__':
     main()

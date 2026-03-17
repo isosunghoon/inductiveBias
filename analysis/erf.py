@@ -23,7 +23,7 @@ from utils.build_model import build_model
 
 RATIO = 0.05  # subset ratio of train set when NUM_IMAGES is None
 BATCH_SIZE = 1
-NUM_IMAGES = 100  # if None: use full subset from ratio; else: stop after this many images
+NUM_IMAGES = 1000  # if None: use full subset from ratio; else: stop after this many images
 
 # 새로운 forward 함수 정의 (ERF 측정용: GAP 제거 버전)
 def erf_forward(self, x):
@@ -52,16 +52,18 @@ def get_input_grad(model, samples):
     return grad_map
 
 def make_erf(save_path=None):
-    args = parse_args()
-    args.train_batch_size = BATCH_SIZE
-
     if save_path is not None:
-        # 모델 체크포인트 및 yaml 파일 저장된 폴더의 경로
-        args.output_path = save_path
+        # run 폴더의 config.yaml로 args를 구성 (해당 run과 동일한 모델/설정 사용)
+        args = parse_args([
+            "--base_config", os.path.join(save_path, "base.yaml"),
+            "--config", os.path.join(save_path, "config.yaml"),
+            "--output_path", save_path,
+        ])
+    else:
+        args = parse_args()
+    
 
-    # output_path 아래에 config 들이 있다고 가정
-    args.base_config = os.path.join(args.output_path, "base.yaml")
-    args.config = os.path.join(args.output_path, "config.yaml")
+    args.train_batch_size = BATCH_SIZE
 
     model = build_model(args)
     model = getattr(model, "_orig_mod", model)  # unwrap torch.compile if present
