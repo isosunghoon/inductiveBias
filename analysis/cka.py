@@ -68,13 +68,13 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
         catcher_1.outputs.clear()
         _ = model_1(x)
         for j in range(len(layers_1)):
-            f1 = flatten_features(catcher_1.outputs[f"feat{i}"]).cpu()
+            f1 = flatten_features(catcher_1.outputs[f"feat{j}"]).cpu()
             feats_1[j].append(f1)
 
         catcher_2.outputs.clear()
         _ = model_2(x)
         for j in range(len(layers_2)):
-            f2 = flatten_features(catcher_2.outputs[f"feat{i}"]).cpu()
+            f2 = flatten_features(catcher_2.outputs[f"feat{j}"]).cpu()
             feats_2[j].append(f2)
         
     for h in hooks:
@@ -100,6 +100,8 @@ def _parse_args():
     config_path_parser.add_argument("--base_config", type=str, default="./config/base.yaml")
     config_path_parser.add_argument("--config1", type=str, default=None)
     config_path_parser.add_argument("--config2", type=str, default=None)
+    config_path_parser.add_argument("--ckpt1", type=str, required=True, help="path to model1 checkpoint (best.pt)")
+    config_path_parser.add_argument("--ckpt2", type=str, required=True, help="path to model2 checkpoint (best.pt)")
     config_paths, _ = config_path_parser.parse_known_args()
 
     parser = get_parser()
@@ -121,7 +123,7 @@ def _parse_args():
     if config_paths.config2 is not None:
         _apply_yaml(args2, config_paths.config2)
 
-    return args1, args2
+    return args1, args2, config_paths.ckpt1, config_paths.ckpt2
 
 def _load_checkpoint(model, ckpt_path, device):
     checkpoint = torch.load(ckpt_path, map_location=device)
@@ -194,39 +196,26 @@ def save_cka_results(cka_matrix, model1_name, model2_name):
 
 
 def main():
-    args1, args2 = _parse_args()
+    args1, args2, ckpt_path1, ckpt_path2 = _parse_args()
     wandb.init(mode="disabled")
 
     args1.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args1.seed)
-    
+
     model1 = setup(args1)
-    ckpt_path1 = os.path.join(args1.output_path, "base_model_exp/mlpmixer-2026-03-13_02-56-40/best.pt")
     if not os.path.exists(ckpt_path1):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path1}")
     _load_checkpoint(model1, ckpt_path1, args1.device)
 
     args2.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args2.seed)
-    
+
     model2 = setup(args2)
-    ckpt_path2 = os.path.join(args2.output_path, "base_model_exp/vit-2026-03-12_15-39-12/best.pt")
     if not os.path.exists(ckpt_path2):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path2}")
     _load_checkpoint(model2, ckpt_path2, args2.device)
 
     _, test_loader, _ = get_dataloader(args1)
-
-    """
-    # print each model's layers name: 
-    print(f"model1: layers name")
-    for name, module in model1.named_modules():
-        print(name)
-
-    print(f"model2: layers name")
-    for name, module in model2.named_modules():
-        print(name)
-    """
 
     # patch_embed + all MetaFormerBlocks — covers full representation trajectory.
     # Change the layers part if you want to make different experiments
