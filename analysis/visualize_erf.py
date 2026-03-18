@@ -20,7 +20,7 @@ params = {'axes.titlesize': large,
 plt.rcParams.update(params)
 plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_style("white")
-plt.rc('font', **{'family': 'Times New Roman'})
+# plt.rc('font', **{'family': 'Times New Roman'})
 plt.rcParams['axes.unicode_minus'] = False
 
 import numpy as np

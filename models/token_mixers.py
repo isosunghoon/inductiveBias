@@ -194,9 +194,18 @@ class PoolFormer(nn.Module):
 
 # implement convformer
 class ConvFormer(nn.Module):
-    def __init__(self, dim, kernel_size=3, stride=1):
+    def __init__(self, dim, kernel_size=3, stride=1, groups=192):
         super().__init__()
-        self.conv = nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2, groups=dim,)
+        if dim % groups != 0:
+            raise ValueError(f"ConvFormer requires dim ({dim}) to be divisible by groups ({groups}).")
+        self.conv = nn.Conv2d(
+            dim,
+            dim,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=kernel_size // 2,
+            groups=groups,
+        )
 
     def forward(self, x):
         return self.conv(x)

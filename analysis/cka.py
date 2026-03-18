@@ -8,6 +8,7 @@ import wandb
 import argparse
 import copy
 import datetime
+import itertools
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
@@ -22,12 +23,24 @@ def linear_cka(X, Y, epsilon=1e-8):
 
     X = X - X.mean(dim=0, keepdim=True)
     Y = Y - Y.mean(dim=0, keepdim=True)
+    
+    n, d1 = X.shape
+    _, d2 = Y.shape
 
-    hsic = torch.norm(Y.T@X, p="fro")**2
-    norm_x = torch.norm(X.T@X, p="fro")
-    norm_y = torch.norm(Y.T@Y, p="fro")
+    # Choose the faster algorithm between feature and sample CKA 
+    if d1*d2+d1*d1+d2*d2 < n*(d1+d2):
+        hsic = torch.norm(Y.T@X, p="fro")**2
+        norm_x = torch.norm(X.T@X, p="fro")
+        norm_y = torch.norm(Y.T@Y, p="fro")
+        return hsic / (norm_x*norm_y+epsilon)
+    else:
+        K = X @ X.T           
+        L = Y @ Y.T          
 
-    return hsic / (norm_x*norm_y+epsilon)
+        hsic = torch.sum(K * L)
+        norm_k = torch.sqrt(torch.sum(K * K).clamp_min(epsilon))
+        norm_l = torch.sqrt(torch.sum(L * L).clamp_min(epsilon))
+        return hsic / (norm_k*norm_l+epsilon)
 
 def flatten_features(feat):
     return feat.reshape(feat.size(0), -1)
@@ -42,7 +55,7 @@ class ActivationCatcher:
         return fn
     
 @torch.no_grad()
-def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
+def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader, max_samples=1024):
     model_1.eval().to(args.device)
     model_2.eval().to(args.device)
 
@@ -55,12 +68,18 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
         hooks.append(layer.register_forward_hook(catcher_1.hook(f"feat{i}")))
     for i, layer in enumerate(layers_2):
         hooks.append(layer.register_forward_hook(catcher_2.hook(f"feat{i}")))
-        
+    
+    max_batches = max_samples // dataloader.batch_size
+    total_batches = min(max_batches, len(dataloader))
+
     # Per-layer feature storage
     feats_1 = {i: [] for i in range(len(layers_1))}
     feats_2 = {j: [] for j in range(len(layers_2))}
 
+    print(f"[CKA] collecting features: 0/{total_batches} batches", flush=True)
     for i, batch in enumerate(dataloader):
+        if i>=max_batches:
+            break
         x, _ = batch
         x = x.to(args.device)
 
@@ -76,6 +95,8 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
         for j in range(len(layers_2)):
             f2 = flatten_features(catcher_2.outputs[f"feat{j}"]).cpu()
             feats_2[j].append(f2)
+
+        print(f"[CKA] collecting features: {i+1}/{total_batches} batches", flush=True)
         
     for h in hooks:
         h.remove()
@@ -85,45 +106,42 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader):
 
     cka_matrix = torch.empty(len(layers_1), len(layers_2), dtype=torch.float32)
 
+    print(f"[CKA] computing CKA matrix ({len(layers_1)}x{len(layers_2)})", flush=True)
     for i in range(len(layers_1)):
         X = feats_1[i]
         for j in range(len(layers_2)):
             Y = feats_2[j]
             cka_matrix[i, j] = linear_cka(X, Y)
+        print(f"[CKA] matrix row {i+1}/{len(layers_1)} done", flush=True)
 
     return cka_matrix
 
-# Defined local _parse_args and _load_checkpoint for two models
+# Returns list of (args, ckpt_path) for every model passed on the command line
 def _parse_args():
-    # Parse only config paths first so we know which YAML files to load.
     config_path_parser = argparse.ArgumentParser(add_help=False)
     config_path_parser.add_argument("--base_config", type=str, default="./config/base.yaml")
-    config_path_parser.add_argument("--config1", type=str, default=None)
-    config_path_parser.add_argument("--config2", type=str, default=None)
-    config_path_parser.add_argument("--ckpt1", type=str, required=True, help="path to model1 checkpoint (best.pt)")
-    config_path_parser.add_argument("--ckpt2", type=str, required=True, help="path to model2 checkpoint (best.pt)")
+    config_path_parser.add_argument("--configs", type=str, nargs="*", default=[],
+                                    help="per-model config yamls (same order as --ckpts)")
+    config_path_parser.add_argument("--ckpts", type=str, nargs="+", required=True,
+                                    help="one or more checkpoint paths")
     config_paths, _ = config_path_parser.parse_known_args()
 
-    parser = get_parser()
+    if config_paths.configs and len(config_paths.configs) != len(config_paths.ckpts):
+        raise ValueError(f"--configs length ({len(config_paths.configs)}) must match --ckpts length ({len(config_paths.ckpts)})")
 
-    # Start from argparse defaults.
+    parser = get_parser()
     defaults = parser.parse_args([])
 
-    # Create args1
-    args1 = copy.deepcopy(defaults)
-    if config_paths.base_config is not None:
-        _apply_yaml(args1, config_paths.base_config)
-    if config_paths.config1 is not None:
-        _apply_yaml(args1, config_paths.config1)
+    model_configs = []
+    for idx, ckpt in enumerate(config_paths.ckpts):
+        args = copy.deepcopy(defaults)
+        if config_paths.base_config is not None:
+            _apply_yaml(args, config_paths.base_config)
+        if idx < len(config_paths.configs):
+            _apply_yaml(args, config_paths.configs[idx])
+        model_configs.append((args, ckpt))
 
-    # Create args2
-    args2 = copy.deepcopy(defaults)
-    if config_paths.base_config is not None:
-        _apply_yaml(args2, config_paths.base_config)
-    if config_paths.config2 is not None:
-        _apply_yaml(args2, config_paths.config2)
-
-    return args1, args2, config_paths.ckpt1, config_paths.ckpt2
+    return model_configs
 
 def _load_checkpoint(model, ckpt_path, device):
     checkpoint = torch.load(ckpt_path, map_location=device)
@@ -196,38 +214,46 @@ def save_cka_results(cka_matrix, model1_name, model2_name):
 
 
 def main():
-    args1, args2, ckpt_path1, ckpt_path2 = _parse_args()
+    model_configs = _parse_args()
     wandb.init(mode="disabled")
 
-    args1.device = "cuda" if torch.cuda.is_available() else "cpu"
-    set_seed(args1.seed)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model1 = setup(args1)
-    if not os.path.exists(ckpt_path1):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path1}")
-    _load_checkpoint(model1, ckpt_path1, args1.device)
+    # Load all models
+    models = []
+    for args, ckpt_path in model_configs:
+        args.device = device
+        set_seed(args.seed)
+        model = setup(args)
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+        _load_checkpoint(model, ckpt_path, device)
+        models.append((args, model))
 
-    args2.device = "cuda" if torch.cuda.is_available() else "cpu"
-    set_seed(args2.seed)
+    # Use the first model's args for the dataloader (dataset config should be shared)
+    _, test_loader, _ = get_dataloader(model_configs[0][0])
 
-    model2 = setup(args2)
-    if not os.path.exists(ckpt_path2):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path2}")
-    _load_checkpoint(model2, ckpt_path2, args2.device)
+    n = len(models)
+    pairs = list(itertools.combinations(range(n), 2))
+    print(f"[CKA] {n} models → {len(pairs)} pairs", flush=True)
 
-    _, test_loader, _ = get_dataloader(args1)
+    for pair_idx, (i, j) in enumerate(pairs):
+        args_i, model_i = models[i]
+        args_j, model_j = models[j]
 
-    # patch_embed + all MetaFormerBlocks — covers full representation trajectory.
-    # Change the layers part if you want to make different experiments
-    layers1 = [model1.patch_embed] + list(model1.blocks)
-    layers2 = [model2.patch_embed] + list(model2.blocks)
-    cka_matrix = compare_cka(args1, model1, layers1, model2, layers2, test_loader)
+        print(f"\n[CKA] pair {pair_idx+1}/{len(pairs)}: {args_i.model} vs {args_j.model}", flush=True)
 
-    print("CKA matrix:")
-    print(cka_matrix)
-    print("shape:", cka_matrix.shape)
+        # patch_embed + all MetaFormerBlocks — covers full representation trajectory.
+        # Change the layers part to try different layers
+        layers_i = [model_i.patch_embed] + list(model_i.blocks)
+        layers_j = [model_j.patch_embed] + list(model_j.blocks)
+        cka_matrix = compare_cka(args_i, model_i, layers_i, model_j, layers_j, test_loader)
 
-    save_cka_results(cka_matrix.cpu(), args1.model, args2.model)
+        print("CKA matrix:")
+        print(cka_matrix)
+        print("shape:", cka_matrix.shape)
+
+        save_cka_results(cka_matrix.cpu(), args_i.model, args_j.model)
 
 
 if __name__ == "__main__":

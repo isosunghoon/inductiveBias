@@ -63,7 +63,7 @@ def setup(args):
     elif args.model == "poolformer":
         args.token_mixer = partial(TM.PoolFormer, pool_size=args.pool_size, stride=args.stride)
     elif args.model == "convformer":
-        args.token_mixer = partial(TM.ConvFormer, kernel_size=args.kernel_size, stride=args.stride)
+        args.token_mixer = partial(TM.ConvFormer, kernel_size=args.kernel_size, stride=args.stride, groups=args.conv_groups)
     elif args.model == "convformer2":
         args.token_mixer = TM.ConvFormer2
     elif args.model == "denseformer":
@@ -222,9 +222,11 @@ def main():
     args.output_path = run_dir
 
     # Save the fully resolved training configuration (after YAML + CLI) as a single config.yaml
+    # Exclude non-serializable / runtime-only fields like device.
     config_path = os.path.join(run_dir, "config.yaml")
+    config_to_save = {k: v for k, v in vars(args).items() if k != "device"}
     with open(config_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(vars(args), f, sort_keys=False, allow_unicode=True)
+        yaml.safe_dump(config_to_save, f, sort_keys=False, allow_unicode=True)
     print(f"[Config] Full training config saved to {config_path}")
 
     if args.run_name == 'XXXXX':

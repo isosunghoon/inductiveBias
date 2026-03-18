@@ -1,0 +1,14 @@
+# # ===== token mixer =====
+# model: convformer
+# kernel_size: 3
+# stride: 1
+# norm_layer: batchnorm
+# label_smoothing: 0
+# learning_rate: 8e-4
+
+model: convformer
+kernel_size: 3
+stride: 1
+conv_groups: 1
+norm_layer: batchnorm
+epochs: 1000

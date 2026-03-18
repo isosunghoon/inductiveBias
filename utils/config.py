@@ -80,6 +80,7 @@ def get_parser():
 
     # ConvFormer
     parser.add_argument("--kernel_size", type=int, default=3, help="kernel size for ConvFormer depthwise convolution")
+    parser.add_argument("--conv_groups", type=int, default=192, help="number of channel groups for ConvFormer grouped convolution")
     # parser.add_argument("--stride", type=int, default=1, help="stride for ConvFormer depthwise convolution")
     return parser
 
