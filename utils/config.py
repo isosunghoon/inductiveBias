@@ -14,6 +14,8 @@ def get_parser():
     parser.add_argument('--seed', type=int, default=67, help="random seed for initialization") #six-seven
     parser.add_argument("--dataset",  default="cifar100", help="dataset for training")
     parser.add_argument("--model", default="identity", help="model type")
+    parser.add_argument("--is_metaformer", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=True,
+                        help="whether to use MetaFormer-style model flow")
 
     # model 구조 관련
     parser.add_argument("--norm_layer", default="identity", help="normalization layer")
@@ -81,7 +83,12 @@ def get_parser():
     # ConvFormer
     parser.add_argument("--kernel_size", type=int, default=3, help="kernel size for ConvFormer depthwise convolution")
     parser.add_argument("--conv_groups", type=int, default=192, help="number of channel groups for ConvFormer grouped convolution")
-    # parser.add_argument("--stride", type=int, default=1, help="stride for ConvFormer depthwise convolution")
+
+    # ResNet
+    parser.add_argument("--resnet_block", type=str, default="basic", help="resnet block type")
+    parser.add_argument("--resnet_stem_channels", type=int, default=64, help="stem output channels for ResNet")
+    parser.add_argument("--resnet_base_channels", type=int, default=64, help="base stage width for ResNet")
+    parser.add_argument("--resnet_zero_init_residual", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=False, help="zero-init the last BN in each residual branch")
     return parser
 
     

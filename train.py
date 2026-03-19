@@ -7,6 +7,7 @@ import yaml
 from models.metaformer import MetaFormer
 import models.token_mixers as TM
 import models.norm_layers as NL
+import models.resnet as RN
 
 from utils.config import parse_args
 from utils.dataset import get_dataloader
@@ -37,44 +38,48 @@ def setup(args):
     wandb.define_metric("train/*", step_metric="epoch")
     wandb.define_metric("val/*", step_metric="epoch")
 
-    if args.norm_layer == 'identity':
-        args.norm_layer = nn.Identity
-    elif args.norm_layer == 'layernorm':
-        args.norm_layer = NL.LayerNorm
-    elif args.norm_layer == 'batchnorm':
-        args.norm_layer = NL.BatchNorm
-    elif args.norm_layer == 'groupnorm':
-        args.norm_layer = NL.GroupNorm
+    if args.is_metaformer:
+        if args.norm_layer == 'identity':
+            args.norm_layer = nn.Identity
+        elif args.norm_layer == 'layernorm':
+            args.norm_layer = NL.LayerNorm
+        elif args.norm_layer == 'batchnorm':
+            args.norm_layer = NL.BatchNorm
+        elif args.norm_layer == 'groupnorm':
+            args.norm_layer = NL.GroupNorm
 
-    if args.act_layer == 'GELU':
-        args.act_layer = nn.GELU
+        if args.act_layer == 'GELU':
+            args.act_layer = nn.GELU
 
-    if args.model == "identity":
-        args.token_mixer = nn.Identity
-    elif args.model == "vit":
-        args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
-                            attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
-    elif args.model == "localvit":
-        args.token_mixer = partial(TM.ConvAttention, head_dim=args.attn_head_dim, window_size=args.window_size, 
-                            qkv_bias=args.attn_qkv_bias, attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
-    elif args.model == "mlpmixer":
-        args.token_mixer = partial(TM.MLPMixer, img_size=args.img_size, patch_size=args.patch_size,
-                                    expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)                               
-    elif args.model == "poolformer":
-        args.token_mixer = partial(TM.PoolFormer, pool_size=args.pool_size, stride=args.stride)
-    elif args.model == "convformer":
-        args.token_mixer = partial(TM.ConvFormer, kernel_size=args.kernel_size, stride=args.stride, groups=args.conv_groups)
-    elif args.model == "convformer2":
-        args.token_mixer = TM.ConvFormer2
-    elif args.model == "denseformer":
-        args.token_mixer = partial(TM.DenseFormer, img_size=args.img_size, patch_size=args.patch_size,
-                                    expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)    
+        if args.model == "identity":
+            args.token_mixer = nn.Identity
+        elif args.model == "vit":
+            args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
+                                attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
+        elif args.model == "localvit":
+            args.token_mixer = partial(TM.ConvAttention, head_dim=args.attn_head_dim, window_size=args.window_size, 
+                                qkv_bias=args.attn_qkv_bias, attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
+        elif args.model == "mlpmixer":
+            args.token_mixer = partial(TM.MLPMixer, img_size=args.img_size, patch_size=args.patch_size,
+                                        expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)                               
+        elif args.model == "poolformer":
+            args.token_mixer = partial(TM.PoolFormer, pool_size=args.pool_size, stride=args.stride)
+        elif args.model == "convformer":
+            args.token_mixer = partial(TM.ConvFormer, kernel_size=args.kernel_size, stride=args.stride, groups=args.conv_groups)
+        elif args.model == "convformer2":
+            args.token_mixer = TM.ConvFormer2
+        elif args.model == "denseformer":
+            args.token_mixer = partial(TM.DenseFormer, img_size=args.img_size, patch_size=args.patch_size,
+                                        expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)    
 
-    model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio,
-                 norm_layer=args.norm_layer, act_layer=args.act_layer, num_classes=args.num_classes, patch_size=args.patch_size, img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_rate=args.drop_rate, drop_path_rate = args.drop_path,
-                 use_layer_scale=args.use_layer_scale, layer_scale_init_value=args.layer_scale_init_value)
+        model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio,
+                    norm_layer=args.norm_layer, act_layer=args.act_layer, num_classes=args.num_classes, patch_size=args.patch_size, img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_rate=args.drop_rate, drop_path_rate = args.drop_path,
+                    use_layer_scale=args.use_layer_scale, layer_scale_init_value=args.layer_scale_init_value)
+    else:
+        if args.model =='resnet18':
+            model = RN.build_resnet(args)
+
     model.to(args.device)
-
     return torch.compile(model)
 
 def train(args, model, run=None):

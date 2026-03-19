@@ -4,6 +4,7 @@
 # ===== Basic =====
 seed: 67
 dataset: cifar100
+is_metaformer: true
 
 # ===== Token mixer =====
 attn_head_dim: 64
