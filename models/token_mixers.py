@@ -273,11 +273,11 @@ class DenseFormer(nn.Module):
 class AffineTransform(nn.Module):
     def __init__(self, num_features):
         super().__init__()
-        self.alpha = nn.Parameter(torch.ones(1,1,num_features))
-        self.beta = nn.Parameter(torch.zeros(1,1,num_features))
+        self.alpha = nn.Parameter(torch.ones(num_features))
+        self.beta = nn.Parameter(torch.zeros(num_features))
 
     def forward(self, x):
-        return self.alpha*x + self.beta
+        return self.alpha.view(1,1,-1)*x + self.beta.view(1,1,-1)
 
 class CommunicationLayer(nn.Module):
     def __init__(self, num_features, num_patches):
@@ -287,8 +287,8 @@ class CommunicationLayer(nn.Module):
         self.aff2 = AffineTransform(num_features)
     
     def forward(self, x):
-        x = self.aff1(x)
         residual = x
+        x = self.aff1(x)
         x = self.fc1(x.transpose(1,2)).transpose(1,2)
         x = self.aff2(x)
         out = x + residual
@@ -318,12 +318,19 @@ class ResMLP(nn.Module):
         super().__init__()
         assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
         num_patches = img_size // patch_size
+        num_patches = num_patches*num_patches
         num_features = dim
 
         self.cl = CommunicationLayer(num_features, num_patches)
         self.ff = FeedForward(num_features, expansion_factor)
 
     def forward(self, x):
+        B, C, H, W = x.shape
+        N = H * W
+        x = torch.flatten(x, start_dim=2).transpose(-2, -1)  # (B, N, C)
+
         x = self.cl(x)
-        out = self.ff(x)
-        return out
+        x = self.ff(x)
+
+        x = x.transpose(-2, -1).reshape(B, C, H, W)
+        return x
