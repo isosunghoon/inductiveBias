@@ -14,6 +14,7 @@ def get_parser():
     parser.add_argument('--seed', type=int, default=67, help="random seed for initialization") #six-seven
     parser.add_argument("--dataset",  default="cifar100", help="dataset for training")
     parser.add_argument("--model", default="identity", help="model type")
+    parser.add_argument("--channel_mixer", default="mlp", help="channel mixer type (e.g. mlp)") # channel mixer
     parser.add_argument("--is_metaformer", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=True,
                         help="whether to use MetaFormer-style model flow")
 
@@ -62,7 +63,7 @@ def get_parser():
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
     parser.add_argument("--no_wandb", action="store_true", help="disable Weights & Biases logging")
     parser.add_argument("--project", type=str, default="exp1", help="W&B project name")
-    parser.add_argument("--run_name", type=str, default="XXXXX", help="W&B run name")
+    parser.add_argument("--run_name", type=str, default="XXXXX", help="W&B run name")    
 
     # token-mixer specific
     # attention

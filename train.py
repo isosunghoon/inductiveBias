@@ -6,6 +6,7 @@ import yaml
 
 from models.metaformer import MetaFormer
 import models.token_mixers as TM
+import models.channel_mixers as CM
 import models.norm_layers as NL
 import models.resnet as RN
 
@@ -72,11 +73,17 @@ def setup(args):
             args.token_mixer = partial(TM.DenseFormer, img_size=args.img_size, patch_size=args.patch_size,
                                         expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)    
         elif args.model == "resmlp":
-            args.token_mixer = partial(TM.ResMLP, img_size=args.img_size, patch_size=args.patch_size, 
+            args.token_mixer = partial(TM.ResMLP, img_size=args.img_size, patch_size=args.patch_size,
                                         expansion_factor=args.expansion_factor)
-                                        
-        model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio,
-                    norm_layer=args.norm_layer, act_layer=args.act_layer, num_classes=args.num_classes, patch_size=args.patch_size, img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_rate=args.drop_rate, drop_path_rate = args.drop_path,
+
+        # Channel Mixers
+        if args.channel_mixer == "mlp":
+            args.channel_mixer = partial(CM.Mlp, mlp_ratio=args.mlp_ratio, act_layer=args.act_layer, drop=args.drop_rate)
+
+        model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer,
+                    channel_mixer=args.channel_mixer,
+                    norm_layer=args.norm_layer, num_classes=args.num_classes, patch_size=args.patch_size,
+                    img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_path_rate=args.drop_path,
                     use_layer_scale=args.use_layer_scale, layer_scale_init_value=args.layer_scale_init_value)
     else:
         if args.model =='resnet18':

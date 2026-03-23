@@ -6,6 +6,9 @@ seed: 67
 dataset: cifar100
 is_metaformer: true
 
+# ===== Channel mixer =====
+channel_mixer: mlp
+
 # ===== Token mixer =====
 attn_head_dim: 64
 attn_qkv_bias: true
