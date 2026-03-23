@@ -29,8 +29,10 @@ def load_checkpoint(model, ckpt_path, device):
         state_dict = checkpoint
 
     state_dict = _normalize_state_dict(state_dict)
+    # torch.compile()로 감싼 모델은 state_dict 키에 '_orig_mod.' 접두사가 붙으므로,
+    # 언랩한 raw 모델에 직접 로드해야 키가 일치함.
     target = getattr(model, "_orig_mod", model)
-    target.load_state_dict(state_dict, strict=True) 
+    target.load_state_dict(state_dict, strict=True)
 
 
 def build_model(args, ckpt_name="best.pt"):
