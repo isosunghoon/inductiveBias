@@ -71,7 +71,10 @@ def setup(args):
         elif args.model == "denseformer":
             args.token_mixer = partial(TM.DenseFormer, img_size=args.img_size, patch_size=args.patch_size,
                                         expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)    
-
+        elif args.model == "resmlp":
+            args.token_mixer = partial(TM.ResMLP, img_size=args.img_size, patch_size=args.patch_size, 
+                                        expansion_factor=args.expansion_factor)
+                                        
         model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer, mlp_ratio=args.mlp_ratio,
                     norm_layer=args.norm_layer, act_layer=args.act_layer, num_classes=args.num_classes, patch_size=args.patch_size, img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_rate=args.drop_rate, drop_path_rate = args.drop_path,
                     use_layer_scale=args.use_layer_scale, layer_scale_init_value=args.layer_scale_init_value)
