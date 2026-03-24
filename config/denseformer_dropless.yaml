@@ -1,6 +1,6 @@
 # ===== token mixer =====
 model: denseformer
-run_name: denseformer_exp4_dropless
+run_name: denseformer_dropless
 expansion_factor: 4
 
 drop_path: 0.05

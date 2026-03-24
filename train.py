@@ -80,6 +80,8 @@ def setup(args):
         # Channel Mixers
         if args.channel_mixer == "mlp":
             args.channel_mixer = partial(CM.Mlp, mlp_ratio=args.mlp_ratio, act_layer=args.act_layer, drop=args.drop_rate)
+        elif args.channel_mixer == "swiglu":
+            args.channel_mixer = partial(CM.SwiGLU, mlp_ratio=args.mlp_ratio, drop=args.drop_rate)
 
         model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer,
                     channel_mixer=args.channel_mixer,
@@ -180,8 +182,9 @@ def train(args, model, run=None):
             run.log({"train/loss": (running_loss / len(train_loader)).item(), "epoch": epoch})
 
         if epoch % args.eval_interval == 0:
+            train_acc = validate(args, model, train_loader)
             val_acc = validate(args, model, test_loader)
-            print(f"[Eval] epoch {epoch}/{args.epochs} | val_acc: {val_acc:.2f}%")
+            print(f"[Eval] epoch {epoch}/{args.epochs} | train_acc: {train_acc:.2f}%, val_acc: {val_acc:.2f}%")
 
             if val_acc > best_acc:
                 best_acc = val_acc
@@ -192,6 +195,7 @@ def train(args, model, run=None):
                     print(f"[Eval] best model saved to {save_path} (acc={best_acc:.2f}%)")
 
             if run is not None:
+                run.log({"train/acc": train_acc, "epoch": epoch})
                 run.log({"val/acc": val_acc, "epoch": epoch})
                 run.log({"val/best_acc": best_acc, "epoch": epoch})
 
