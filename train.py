@@ -35,9 +35,10 @@ def set_seed(SEED):
     torch.manual_seed(SEED)
 
 def setup(args):
-    wandb.define_metric("epoch")
-    wandb.define_metric("train/*", step_metric="epoch")
-    wandb.define_metric("val/*", step_metric="epoch")
+    if not args.no_wandb:
+        wandb.define_metric("epoch")
+        wandb.define_metric("train/*", step_metric="epoch")
+        wandb.define_metric("val/*", step_metric="epoch")
 
     if args.is_metaformer:
         if args.norm_layer == 'identity':
@@ -48,6 +49,8 @@ def setup(args):
             args.norm_layer = NL.BatchNorm
         elif args.norm_layer == 'groupnorm':
             args.norm_layer = NL.GroupNorm
+        elif args.norm_layer == 'rmsnorm':
+            args.norm_layer = NL.RMSNorm
 
         if args.act_layer == 'GELU':
             args.act_layer = nn.GELU
@@ -79,6 +82,8 @@ def setup(args):
         # Channel Mixers
         if args.channel_mixer == "mlp":
             args.channel_mixer = partial(CM.Mlp, mlp_ratio=args.mlp_ratio, act_layer=args.act_layer, drop=args.drop_rate)
+        elif args.channel_mixer == "swiglu":
+            args.channel_mixer = partial(CM.SwiGLU, mlp_ratio=args.mlp_ratio, drop=args.drop_rate)
 
         model = MetaFormer(depth=args.depth, embed_dim=args.embed_dim, token_mixer=args.token_mixer,
                     channel_mixer=args.channel_mixer,
