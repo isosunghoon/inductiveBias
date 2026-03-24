@@ -35,9 +35,10 @@ def set_seed(SEED):
     torch.manual_seed(SEED)
 
 def setup(args):
-    wandb.define_metric("epoch")
-    wandb.define_metric("train/*", step_metric="epoch")
-    wandb.define_metric("val/*", step_metric="epoch")
+    if not args.no_wandb:
+        wandb.define_metric("epoch")
+        wandb.define_metric("train/*", step_metric="epoch")
+        wandb.define_metric("val/*", step_metric="epoch")
 
     if args.is_metaformer:
         if args.norm_layer == 'identity':

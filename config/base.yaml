@@ -36,7 +36,7 @@ train_batch_size: 512
 test_batch_size: 256
 
 optimizer: adamw
-learning_rate: 6.67e-4
+learning_rate: 5e-4
 weight_decay: 0.05
 decay_type: cosine
 warmup_epochs: 20
