@@ -53,4 +53,4 @@ fp16: true
 data_path: ./data
 save_best: true
 no_wandb: false
-project: base_model_exp
+project: search_sunghoon

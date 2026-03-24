@@ -1,3 +1,0 @@
-# ===== token mixer =====
-model: resmlp
-expansion_factor: 4 # parameters for the ResMLP
