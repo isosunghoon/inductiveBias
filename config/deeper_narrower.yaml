@@ -1,0 +1,29 @@
+model: denseformer
+run_name: tonight_p4_deeper_narrower
+
+patch_size: 4
+embed_dim: 176
+depth: 14
+
+expansion_factor: 2
+channel_mixer: mlp
+mlp_ratio: 4.0
+norm_layer: layernorm
+add_pos_emb: false
+
+use_layer_scale: true
+layer_scale_init_value: 1.0e-6
+
+mixer_drop: 0.0
+drop_path: 0.04
+drop_rate: 0.0
+
+label_smoothing: 0.0
+
+epochs: 650
+learning_rate: 7.0e-4
+warmup_epochs: 15
+weight_decay: 0.05
+decay_type: cosine
+
+augment: strong

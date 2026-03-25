@@ -1,0 +1,22 @@
+# tonight_p4_swiglu_fair.yaml
+model: denseformer
+run_name: exp2_swiglu
+
+expansion_factor: 2
+channel_mixer: swiglu
+mlp_ratio: 2.667
+add_pos_emb: false
+
+use_layer_scale: true
+layer_scale_init_value: 1e-6
+
+mixer_drop: 0.0
+drop_path: 0.02
+drop_rate: 0.0
+
+label_smoothing: 0.0
+
+epochs: 650
+learning_rate: 6.0e-4
+warmup_epochs: 15
+weight_decay: 0.04

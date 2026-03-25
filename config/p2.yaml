@@ -1,0 +1,11 @@
+# ===== token mixer =====
+model: denseformer
+run_name: dropless_p2
+
+patch_size: 2
+expansion_factor: 2
+
+drop_path: 0.05
+mixer_drop: 0.05
+label_smoothing: 0.0
+use_layer_scale: true
