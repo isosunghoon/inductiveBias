@@ -120,6 +120,7 @@ def train(args, model, run=None):
 
     model.zero_grad()
     best_acc = 0
+    best_train_acc = 0.0
     global_step = 0
 
     # train loop
@@ -185,8 +186,10 @@ def train(args, model, run=None):
 
         if epoch % args.eval_interval == 0:
             val_acc = validate(args, model, test_loader)
-            print(f"[Eval] epoch {epoch}/{args.epochs} | val_acc: {val_acc:.2f}%")
-
+            train_acc = validate(args, model, train_loader)
+            print(f"[Eval] epoch {epoch}/{args.epochs} | train_acc: {train_acc:.2f}% | val_acc: {val_acc:.2f}%)")
+            if train_acc > best_train_acc:
+                best_train_acc = train_acc
             if val_acc > best_acc:
                 best_acc = val_acc
                 if args.save_best:
@@ -196,6 +199,8 @@ def train(args, model, run=None):
                     print(f"[Eval] best model saved to {save_path} (acc={best_acc:.2f}%)")
 
             if run is not None:
+                run.log({"train/acc": train_acc, "epoch": epoch})
+                run.log({"train/best_acc": best_train_acc, "epoch": epoch})
                 run.log({"val/acc": val_acc, "epoch": epoch})
                 run.log({"val/best_acc": best_acc, "epoch": epoch})
 
