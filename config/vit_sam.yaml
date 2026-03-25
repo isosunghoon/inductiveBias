@@ -1,0 +1,3 @@
+model: vit
+optimizer: sam 
+augment: none
