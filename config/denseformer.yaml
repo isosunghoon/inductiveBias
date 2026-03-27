@@ -1,4 +1,24 @@
-# ===== token mixer =====
+# exp_best_immediate.yaml
 model: denseformer
+run_name: try1
+
 expansion_factor: 2
-mixer_drop: 0.1
+channel_mixer: mlp
+mlp_ratio: 4.0
+add_pos_emb: false
+
+use_layer_scale: true
+layer_scale_init_value: 1e-5
+
+mixer_drop: 0.0
+drop_path: 0.03
+drop_rate: 0.0
+
+label_smoothing: 0.0
+
+epochs: 500
+learning_rate: 6.5e-4
+warmup_epochs: 10
+weight_decay: 0.05
+
+augment: strong

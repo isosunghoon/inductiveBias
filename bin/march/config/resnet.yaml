@@ -1,0 +1,9 @@
+model: resnet18
+is_metaformer: false
+optimizer: sgd
+learning_rate: 0.1
+weight_decay: 5.0e-4
+resnet_block: basic
+resnet_stem_channels: 64
+resnet_base_channels: 64
+resnet_zero_init_residual: false

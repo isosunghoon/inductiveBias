@@ -1,0 +1,4 @@
+# ===== token mixer =====
+model: denseformer
+expansion_factor: 2
+mixer_drop: 0.1
