@@ -1,0 +1,25 @@
+# Core
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+
+# Config & utilities
+PyYAML>=6.0
+tqdm>=4.65.0
+
+# Experiment tracking
+wandb>=0.16.0
+
+# Model utilities (used in analysis/erf.py and bin/february/)
+timm>=0.9.0
+
+# Analysis & visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+Pillow>=10.0.0
+
+# Loss landscape analysis (analysis/loss_landscape.py)
+pyhessian>=0.1
+
+# Geometry experiments (bin/geometry/)
+opencv-python>=4.8.0

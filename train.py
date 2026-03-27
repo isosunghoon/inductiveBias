@@ -106,6 +106,16 @@ def train(args, model, run=None):
         warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
         main_scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs - args.warmup_epochs)
         scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[args.warmup_epochs])
+    elif args.decay_type == "combined":
+        warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
+        main_scheduler = CosineAnnealingLR(optimizer, T_max=args.cosine_epochs, eta_min=args.eta_min)
+        remaining_epochs = args.epochs - args.warmup_epochs - args.cosine_epochs
+        remaining_scheduler = LinearLR(optimizer, start_factor=args.eta_min, end_factor=1e-6, total_iters=remaining_epochs)
+        scheduler = SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler, remaining_scheduler],
+            milestones=[args.warmup_epochs, args.warmup_epochs + args.cosine_epochs]
+        )
     else:
         scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.epochs)
 

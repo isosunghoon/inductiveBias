@@ -198,14 +198,9 @@ class ConvFormer(nn.Module):
         super().__init__()
         if dim % groups != 0:
             raise ValueError(f"ConvFormer requires dim ({dim}) to be divisible by groups ({groups}).")
-        self.conv = nn.Conv2d(
-            dim,
-            dim,
-            kernel_size=kernel_size,
-            stride=stride,
-            padding=kernel_size // 2,
-            groups=groups,
-        )
+        self.conv = nn.Conv2d(dim, dim, kernel_size=kernel_size, 
+            stride=stride, padding=kernel_size // 2, groups=groups,
+            )
 
     def forward(self, x):
         return self.conv(x)

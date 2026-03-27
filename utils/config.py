@@ -35,7 +35,7 @@ def get_parser():
     parser.add_argument("--layer_scale_init_value", type=float, default=1e-5, help="layer scale initial value")
     
     # train 하이퍼파라미터
-    parser.add_argument("--epochs", type=int, default=100, help="number of training epochs")
+    parser.add_argument("--epochs", type=int, default=500, help="number of training epochs")
     parser.add_argument("--train_batch_size", type=int, default=128, help="batch size for training")
     parser.add_argument("--test_batch_size", type=int, default=256, help="batch size for evaluation")
 
@@ -44,6 +44,8 @@ def get_parser():
     parser.add_argument("--weight_decay", type=float, default=5e-4, help="weight decay (L2 regularization)")
     parser.add_argument("--decay_type", default="cosine", help="lr decay type (cosine or linear)")
     parser.add_argument("--warmup_epochs", type=int, default=1, help="number of warmup epochs")
+    parser.add_argument("--cosine_epochs", type=int, default=300, help="number of cosine epochs")
+    parser.add_argument("--eta_min", type=float, default=1e-5, help = "eta_min")
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="max gradient norm for clipping")
     parser.add_argument("--label_smoothing", type=float, default=0.1, help="label smoothing factor for cross entropy (0.0 = disabled)")
     parser.add_argument("--augment", type=str, default="none",

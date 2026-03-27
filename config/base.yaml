@@ -40,6 +40,7 @@ learning_rate: 6.67e-4
 weight_decay: 0.05
 decay_type: cosine
 warmup_epochs: 20
+eta_min: 5e-5
 max_grad_norm: 5.0
 eval_interval: 5
 label_smoothing: 0.1
@@ -53,4 +54,4 @@ fp16: true
 data_path: ./data
 save_best: true
 no_wandb: false
-project: base_model_exp
+project: search_roynine
