@@ -2,4 +2,4 @@
 # base.yaml과 거의 동일 — local_vit 전용 파라미터만 추가
 model: localvit
 
-window_size: 5
+window_size: 3

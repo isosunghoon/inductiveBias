@@ -51,3 +51,29 @@ class GroupNorm(nn.Module):
 
     def forward(self, x):
         return self.gn(x)
+
+class RMSNorm(nn.Module):
+    """
+    RMS normalization over channel dim for NCHW tensors [B, C, H, W].
+    Per spatial position: y = x * rsqrt(mean_c(x^2) + eps) * gamma_c.
+    Matches standard RMSNorm (eps inside sqrt); compute in float32 for AMP stability.
+    """
+    def __init__(self, num_channels, eps=1e-5):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(num_channels))
+        self.eps = eps
+
+    def forward(self, x):
+        s = x.pow(2).mean(1, keepdim=True)
+        x = x / torch.sqrt(s + self.eps)
+        x = self.weight.unsqueeze(-1).unsqueeze(-1) * x
+        return x
+
+        #TODO: fp16 사용 시 float로 형 변환 후 사용? 
+        # input_dtype = x.dtype
+        # x_f = x.float()
+        # var = x_f.pow(2).mean(1, keepdim=True)
+        # x_f = x_f * torch.rsqrt(var + self.eps)
+        # w = self.weight.float().view(1, -1, 1, 1)
+        # x_f = w * x_f
+        # return x_f.to(input_dtype)

@@ -9,6 +9,7 @@ import models.token_mixers as TM
 import models.channel_mixers as CM
 import models.norm_layers as NL
 import models.resnet as RN
+from models.sam import SAM
 
 from utils.config import parse_args
 from utils.dataset import get_dataloader
@@ -16,6 +17,8 @@ from utils.dataset import get_dataloader
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from functools import partial
+
+
 
 import os
 import warnings
@@ -49,6 +52,8 @@ def setup(args):
             args.norm_layer = NL.BatchNorm
         elif args.norm_layer == 'groupnorm':
             args.norm_layer = NL.GroupNorm
+        elif args.norm_layer == 'rmsnorm':
+            args.norm_layer = NL.RMSNorm
 
         if args.act_layer == 'GELU':
             args.act_layer = nn.GELU
@@ -104,7 +109,14 @@ def train(args, model, run=None):
         optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
     elif args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
-    
+    elif args.optimizer == "sam":
+        base_optimizer = torch.optim.AdamW
+        optimizer = SAM(model.parameters(), base_optimizer, lr=args.learning_rate, weight_decay=args.weight_decay,)
+        # SAM은 두 번의 forward/backward를 사용하므로 GradScaler/AMP와 함께 쓰면 unscale_ 호출이 복잡해진다.
+        # 구현 단순성과 안정성을 위해 SAM을 쓸 때는 항상 fp32로 학습하도록 강제한다.
+        args.fp16 = False
+    use_sam = isinstance(optimizer, SAM)
+
     if args.decay_type == "cosine":
         warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
         main_scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs - args.warmup_epochs)
@@ -118,6 +130,7 @@ def train(args, model, run=None):
 
     model.zero_grad()
     best_acc = 0
+    best_train_acc = 0.0
     global_step = 0
 
     # train loop
@@ -142,18 +155,31 @@ def train(args, model, run=None):
             running_loss += loss.detach()
             global_step += 1
 
-            if args.fp16:
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                scaler.step(optimizer)
-                scaler.update()
-            else:
+            if use_sam:
+                # SAM: 두 번의 forward-backward 패스, batchnorm 사용하는 경우에는 enable_running_stats/disable_running stats 사용 필요
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.step()
+                optimizer.first_step(zero_grad=True)
 
-            optimizer.zero_grad()
+                logits2 = model(x)
+                loss2 = torch.nn.functional.cross_entropy(logits2, y, label_smoothing=args.label_smoothing)
+                loss2.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                optimizer.second_step(zero_grad=True)
+            else:
+                # 일반 옵티마이저 경로 (SGD / AdamW)
+                if args.fp16:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.step()
+
+                optimizer.zero_grad()
 
             if step % args.log_interval == 0:
                 avg_loss = (running_loss / (step + 1)).item()
@@ -184,8 +210,10 @@ def train(args, model, run=None):
         if epoch % args.eval_interval == 0:
             train_acc = validate(args, model, train_loader)
             val_acc = validate(args, model, test_loader)
-            print(f"[Eval] epoch {epoch}/{args.epochs} | train_acc: {train_acc:.2f}%, val_acc: {val_acc:.2f}%")
-
+            train_acc = validate(args, model, train_loader)
+            print(f"[Eval] epoch {epoch}/{args.epochs} | train_acc: {train_acc:.2f}% | val_acc: {val_acc:.2f}%)")
+            if train_acc > best_train_acc:
+                best_train_acc = train_acc
             if val_acc > best_acc:
                 best_acc = val_acc
                 if args.save_best:
@@ -196,6 +224,7 @@ def train(args, model, run=None):
 
             if run is not None:
                 run.log({"train/acc": train_acc, "epoch": epoch})
+                run.log({"train/best_acc": best_train_acc, "epoch": epoch})
                 run.log({"val/acc": val_acc, "epoch": epoch})
                 run.log({"val/best_acc": best_acc, "epoch": epoch})
 
@@ -230,11 +259,15 @@ def main():
     args = parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args.seed)
-
+    
+    if args.run_name == 'XXXXX':
+        run_name = f"{args.model}"
+    else:
+        run_name = f"{args.run_name}"
     # Build structured output directory: output/{project}/{model}-{start_time}
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     project_dir = os.path.join("output", args.project)
-    run_dir_name = f"{args.model}-{timestamp}"
+    run_dir_name = f"{run_name}-{timestamp}"
     run_dir = os.path.join(project_dir, run_dir_name)
     os.makedirs(run_dir, exist_ok=True)
 
@@ -248,11 +281,6 @@ def main():
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(config_to_save, f, sort_keys=False, allow_unicode=True)
     print(f"[Config] Full training config saved to {config_path}")
-
-    if args.run_name == 'XXXXX':
-        run_name = f"{args.model}"
-    else:
-        run_name = f"{args.run_name}"
 
     if args.no_wandb:
         run = None
