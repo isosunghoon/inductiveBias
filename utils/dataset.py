@@ -15,7 +15,8 @@ CIFAR100_STD  = (0.2675, 0.2565, 0.2761)
 # ---------------------------------------------------------------------------
 
 class RASampler(torch.utils.data.Sampler):
-    """에폭마다 각 샘플을 num_repeats번 반복해 미니배치 내에
+    """
+    에폭마다 각 샘플을 num_repeats번 반복해 미니배치 내에
     동일 이미지의 다른 증강 버전이 포함되도록 함.
 
     인덱스 순서: 셔플 후 [i0,i0,i0, i1,i1,i1, ...] (num_repeats=3)
@@ -24,21 +25,60 @@ class RASampler(torch.utils.data.Sampler):
     Reference: https://github.com/facebookresearch/deit/blob/main/samplers.py
     """
 
-    def __init__(self, dataset, num_repeats: int, shuffle: bool = True):
+    def __init__(self, dataset, num_repeats: int, shuffle: bool = True, batch_size: int = 256):
         self.n = len(dataset)
         self.num_repeats = num_repeats
         self.shuffle = shuffle
+        self.batch_size = batch_size
+        # 에폭 길이를 데이터셋 크기(N)와 동일하게 유지하여 학습 시간 관리
+        self.num_selected_samples = self.n
 
     def __iter__(self):
         if self.shuffle:
-            indices = torch.randperm(self.n).tolist()
+            base_indices = torch.randperm(self.n).tolist()
         else:
-            indices = list(range(self.n))
-        repeated = [idx for idx in indices for _ in range(self.num_repeats)]
-        return iter(repeated)
+            base_indices = list(range(self.n))
+
+        # 배치 기반 구성 (Batch-aware construction):
+        # - 동일 이미지의 반복(repeats)을 같은 배치 안에 최대한 팩킹
+        # - batch_size가 num_repeats로 나누어떨어지지 않는 경우도 고려함
+        out = []
+        ptr = 0
+
+        def next_base_idx():
+            nonlocal ptr
+            if ptr >= self.n:
+                ptr = 0
+                if self.shuffle:
+                    random.shuffle(base_indices)
+            idx = base_indices[ptr]
+            ptr += 1
+            return idx
+
+        while len(out) < self.num_selected_samples:
+            remaining = self.num_selected_samples - len(out)
+            cur_bs = min(self.batch_size, remaining)
+            
+            full_groups = cur_bs // self.num_repeats
+            remainder = cur_bs % self.num_repeats
+
+            batch = []
+            # 같은 이미지를 num_repeats만큼 반복해서 배치에 채움
+            for _ in range(full_groups):
+                idx = next_base_idx()
+                batch.extend([idx] * self.num_repeats)
+
+            # 배치의 남은 공간(remainder) 처리
+            if remainder > 0:
+                idx = next_base_idx()
+                batch.extend([idx] * remainder)
+
+            out.extend(batch)
+
+        return iter(out[:self.num_selected_samples])
 
     def __len__(self) -> int:
-        return self.n * self.num_repeats
+        return self.num_selected_samples
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +204,12 @@ def get_dataloader(args):
 
         # strong 전용: Repeated Augmentation 샘플러 (num_repeats=3)
         if level == 'strong':
-            sampler = RASampler(trainset, num_repeats=3, shuffle=True)
+            sampler = RASampler(
+                trainset,
+                num_repeats=3,
+                shuffle=True,
+                batch_size=args.train_batch_size,
+            )
             train_loader = DataLoader(
                 trainset,
                 batch_size=args.train_batch_size,
@@ -222,7 +267,12 @@ def make_subset_loader(args, train_loader, ratio):
         common_loader_kwargs["prefetch_factor"] = 4
 
     if getattr(args, "augment", "none") == "strong":
-        sampler = RASampler(subset, num_repeats=3, shuffle=True)
+        sampler = RASampler(
+            subset,
+            num_repeats=3,
+            shuffle=True,
+            batch_size=bs,
+        )
         return DataLoader(
             subset,
             batch_size=bs,
