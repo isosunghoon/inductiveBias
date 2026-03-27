@@ -204,12 +204,7 @@ def get_dataloader(args):
 
         # strong 전용: Repeated Augmentation 샘플러 (num_repeats=3)
         if level == 'strong':
-            sampler = RASampler(
-                trainset,
-                num_repeats=3,
-                shuffle=True,
-                batch_size=args.train_batch_size,
-            )
+            sampler = RASampler(trainset, num_repeats=3, shuffle=True, batch_size=args.train_batch_size,)
             train_loader = DataLoader(
                 trainset,
                 batch_size=args.train_batch_size,
@@ -267,12 +262,7 @@ def make_subset_loader(args, train_loader, ratio):
         common_loader_kwargs["prefetch_factor"] = 4
 
     if getattr(args, "augment", "none") == "strong":
-        sampler = RASampler(
-            subset,
-            num_repeats=3,
-            shuffle=True,
-            batch_size=bs,
-        )
+        sampler = RASampler(subset, num_repeats=3, shuffle=True, batch_size=bs,)
         return DataLoader(
             subset,
             batch_size=bs,
