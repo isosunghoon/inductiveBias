@@ -53,4 +53,4 @@ fp16: true
 data_path: ./data
 save_best: true
 no_wandb: false
-project: search_seop
+project: model_scaling_exp
