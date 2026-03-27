@@ -258,11 +258,15 @@ def main():
     args = parse_args()
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(args.seed)
-
+    
+    if args.run_name == 'XXXXX':
+        run_name = f"{args.model}"
+    else:
+        run_name = f"{args.run_name}"
     # Build structured output directory: output/{project}/{model}-{start_time}
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     project_dir = os.path.join("output", args.project)
-    run_dir_name = f"{args.model}-{timestamp}"
+    run_dir_name = f"{run_name}-{timestamp}"
     run_dir = os.path.join(project_dir, run_dir_name)
     os.makedirs(run_dir, exist_ok=True)
 
@@ -276,11 +280,6 @@ def main():
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(config_to_save, f, sort_keys=False, allow_unicode=True)
     print(f"[Config] Full training config saved to {config_path}")
-
-    if args.run_name == 'XXXXX':
-        run_name = f"{args.model}"
-    else:
-        run_name = f"{args.run_name}"
 
     if args.no_wandb:
         run = None
