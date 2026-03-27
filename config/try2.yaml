@@ -1,0 +1,16 @@
+model: denseformer
+run_name: try2
+
+expansion_factor: 2
+
+add_pos_emb: false
+use_layer_scale: true
+layer_scale_init_value: 1e-5
+mixer_drop: 0.0
+drop_path: 0.02
+drop_rate: 0.0
+label_smoothing: 0.0
+epochs: 650
+learning_rate: 7.5e-4
+warmup_epochs: 12
+weight_decay: 0.04

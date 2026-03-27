@@ -111,74 +111,32 @@ class ConvAttention(nn.Module):
         return x
 
 # MLP-Mixer Implementation
-class MLP(nn.Module):
-    def __init__(self, num_features, expansion_factor, mixer_dropout):
-        super().__init__()
-        num_hidden = int(num_features * expansion_factor)
-        self.fc1 = nn.Linear(num_features, num_hidden)
-        self.dropout1 = nn.Dropout(mixer_dropout)
-        self.fc2 = nn.Linear(num_hidden, num_features)
-        self.dropout2 = nn.Dropout(mixer_dropout)
-    
-    def forward(self, x):
-        x = self.dropout1(F.gelu(self.fc1(x)))
-        x = self.dropout2(self.fc2(x))
-        return x
-
-class TokenMixer(nn.Module):
-    def __init__(self, num_patches, num_features, expansion_factor, mixer_drop):
-        super().__init__()
-        self.norm = nn.LayerNorm(num_features)
-        self.mlp = MLP(num_patches, expansion_factor, mixer_drop)
-    
-    def forward(self, x):
-        # x.shape = (B, N, C), 서로 다른 token을 섞음: N->N
-        residual = x
-        x = self.norm(x)
-        x = x.transpose(1,2)
-        x = self.mlp(x)
-        x = x.transpose(1,2)
-        out = x + residual
-        return out
-
-class ChannelMixer(nn.Module):
-    def __init__(self, num_patches, num_features, expansion_factor, mixer_drop):
-        super().__init__()
-        self.norm = nn.LayerNorm(num_features)
-        self.mlp = MLP(num_features, expansion_factor, mixer_drop)
-    
-    def forward(self, x): 
-        # x.shape = (B, N, C), 서로 다른 channel을 섞음: C->C
-        residual = x
-        x = self.norm(x)
-        x = self.mlp(x)
-        out = x + residual
-        return out
-
-class MLPMixer(nn.Module):
+class DenseFormer(nn.Module):
     def __init__(self, dim, img_size=32, patch_size=2, expansion_factor=2, mixer_drop=0.5):
         # num_patches = N
         # dim = C
         super().__init__()
         assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
-        num_patches = (img_size // patch_size) ** 2
+        num_features = (img_size // patch_size) ** 2
         self.dim = dim
         self.expansion_factor = expansion_factor
-        self.mixer_drop = mixer_drop
-        self.token_mixer = TokenMixer(num_patches, dim, self.expansion_factor, self.mixer_drop)
-        self.channel_mixer = ChannelMixer(num_patches, dim, self.expansion_factor, self.mixer_drop)
+        num_hidden = int(num_features * expansion_factor)
+        self.fc1 = nn.Linear(num_features, num_hidden)
+        self.dropout1 = nn.Dropout(mixer_drop)
+        self.fc2 = nn.Linear(num_hidden, num_features)
+        self.dropout2 = nn.Dropout(mixer_drop)
 
     def forward(self, x):
         shape = x.shape
         if len(shape) == 4:
             B, C, H, W = shape
-            N = H * W
             x = torch.flatten(x, start_dim=2).transpose(-2, -1)
         else:
             B, N, C = shape
-        x = self.token_mixer(x)
-        x = self.channel_mixer(x)
-
+        x = x.transpose(-2, -1)
+        x = self.dropout1(F.gelu(self.fc1(x)))
+        x = self.dropout2(self.fc2(x))
+        x = x.transpose(-2, -1)
         if len(shape) == 4:
             x = x.transpose(-2, -1).reshape(B, C, H, W)
         return x
@@ -210,127 +168,110 @@ class ConvFormer(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
-class SEModule(nn.Module):
-    def __init__(self, dim, rd_ratio=0.25):
-        super().__init__()
-        hidden_dim = max(16, int(dim * rd_ratio))
-        self.fc1 = nn.Conv2d(dim, hidden_dim, 1, bias=True)
-        self.act = nn.GELU()
-        self.fc2 = nn.Conv2d(hidden_dim, dim, 1, bias=True)
-        self.gate = nn.Sigmoid()
+# # resmlp Implementation
+# class AffineTransform(nn.Module):
+#     def __init__(self, num_features):
+#         super().__init__()
+#         self.alpha = nn.Parameter(torch.ones(num_features))
+#         self.beta = nn.Parameter(torch.zeros(num_features))
 
-    def forward(self, x):
-        scale = x.mean((2, 3), keepdim=True)
-        scale = self.fc2(self.act(self.fc1(scale)))
-        return x * self.gate(scale)
+#     def forward(self, x):
+#         return self.alpha.view(1,1,-1)*x + self.beta.view(1,1,-1)
 
-class ConvFormer2(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.dw3 = nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
-        self.dw5 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim, bias=False)
-        self.dw_d2 = nn.Conv2d(dim, dim, 3, padding=2, dilation=2, groups=dim, bias=False)
-        # Keep fusion light because the following MetaFormer MLP already mixes channels.
-        self.fuse = nn.Conv2d(dim * 3, dim, 1, bias=False)
-        self.act = nn.GELU()
-        self.se = SEModule(dim, rd_ratio=0.25)
-
-    def forward(self, x):
-        x = torch.cat((self.dw3(x), self.dw5(x), self.dw_d2(x)), dim=1)
-        x = self.fuse(x)
-        x = self.act(x)
-        x = self.se(x)
-        return x
-
-# implement denseformer
-class DenseFormer(nn.Module):
-    def __init__(self, dim, img_size=32, patch_size=2, expansion_factor=2, mixer_drop=0.5):
-        # num_patches = N
-        # dim = C
-        super().__init__()
-        assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
-        num_patches = (img_size // patch_size) ** 2
-        self.dim = dim
-        self.expansion_factor = expansion_factor
-        self.mixer_drop = mixer_drop
-        self.token_mixer = TokenMixer(num_patches, dim, self.expansion_factor, self.mixer_drop)
-        
-    def forward(self, x):
-        shape = x.shape
-        if len(shape) == 4:
-            B, C, H, W = shape
-            N = H * W
-            x = torch.flatten(x, start_dim=2).transpose(-2, -1)
-        else:
-            B, N, C = shape
-        x = self.token_mixer(x)
-
-        if len(shape) == 4:
-            x = x.transpose(-2, -1).reshape(B, C, H, W)
-        return x
-
-# resmlp Implementation
-class AffineTransform(nn.Module):
-    def __init__(self, num_features):
-        super().__init__()
-        self.alpha = nn.Parameter(torch.ones(num_features))
-        self.beta = nn.Parameter(torch.zeros(num_features))
-
-    def forward(self, x):
-        return self.alpha.view(1,1,-1)*x + self.beta.view(1,1,-1)
-
-class CommunicationLayer(nn.Module):
-    def __init__(self, num_features, num_patches):
-        super().__init__()
-        self.aff1 = AffineTransform(num_features)
-        self.fc1 = nn.Linear(num_patches, num_patches)
-        self.aff2 = AffineTransform(num_features)
+# class CommunicationLayer(nn.Module):
+#     def __init__(self, num_features, num_patches):
+#         super().__init__()
+#         self.aff1 = AffineTransform(num_features)
+#         self.fc1 = nn.Linear(num_patches, num_patches)
+#         self.aff2 = AffineTransform(num_features)
     
-    def forward(self, x):
-        residual = x
-        x = self.aff1(x)
-        x = self.fc1(x.transpose(1,2)).transpose(1,2)
-        x = self.aff2(x)
-        out = x + residual
-        return out
+#     def forward(self, x):
+#         residual = x
+#         x = self.aff1(x)
+#         x = self.fc1(x.transpose(1,2)).transpose(1,2)
+#         x = self.aff2(x)
+#         out = x + residual
+#         return out
 
-class FeedForward(nn.Module):
-    def __init__(self, num_features, expansion_factor):
-        super().__init__()
-        num_hidden = num_features * expansion_factor
-        self.aff1 = AffineTransform(num_features)
-        self.fc1 = nn.Linear(num_features, num_hidden)
-        self.fc2 = nn.Linear(num_hidden, num_features)
-        self.aff2 = AffineTransform(num_features)
+# class FeedForward(nn.Module):
+#     def __init__(self, num_features, expansion_factor):
+#         super().__init__()
+#         num_hidden = num_features * expansion_factor
+#         self.aff1 = AffineTransform(num_features)
+#         self.fc1 = nn.Linear(num_features, num_hidden)
+#         self.fc2 = nn.Linear(num_hidden, num_features)
+#         self.aff2 = AffineTransform(num_features)
 
-    def forward(self, x):
-        x = self.aff1(x)
-        residual = x
-        x = self.fc1(x)
-        x = F.gelu(x)
-        x = self.fc2(x)
-        x = self.aff2(x)
-        out = x + residual
-        return out
+#     def forward(self, x):
+#         x = self.aff1(x)
+#         residual = x
+#         x = self.fc1(x)
+#         x = F.gelu(x)
+#         x = self.fc2(x)
+#         x = self.aff2(x)
+#         out = x + residual
+#         return out
 
-class ResMLP(nn.Module):
-    def __init__(self, dim, img_size=32, patch_size=4, expansion_factor=4):
-        super().__init__()
-        assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
-        num_patches = img_size // patch_size
-        num_patches = num_patches*num_patches
-        num_features = dim
+# class ResMLP(nn.Module):
+#     def __init__(self, dim, img_size=32, patch_size=4, expansion_factor=4):
+#         super().__init__()
+#         assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
+#         num_patches = img_size // patch_size
+#         num_patches = num_patches*num_patches
+#         num_features = dim
 
-        self.cl = CommunicationLayer(num_features, num_patches)
-        self.ff = FeedForward(num_features, expansion_factor)
+#         self.cl = CommunicationLayer(num_features, num_patches)
+#         self.ff = FeedForward(num_features, expansion_factor)
 
-    def forward(self, x):
-        B, C, H, W = x.shape
-        N = H * W
-        x = torch.flatten(x, start_dim=2).transpose(-2, -1)  # (B, N, C)
+#     def forward(self, x):
+#         B, C, H, W = x.shape
+#         N = H * W
+#         x = torch.flatten(x, start_dim=2).transpose(-2, -1)  # (B, N, C)
 
-        x = self.cl(x)
-        x = self.ff(x)
+#         x = self.cl(x)
+#         x = self.ff(x)
 
-        x = x.transpose(-2, -1).reshape(B, C, H, W)
-        return x
+#         x = x.transpose(-2, -1).reshape(B, C, H, W)
+#         return x
+
+# class MLPMixer(nn.Module):
+#     def __init__(self, dim, img_size=32, patch_size=2, expansion_factor=2, mixer_drop=0.5):
+#         # num_patches = N
+#         # dim = C
+#         super().__init__()
+#         assert img_size % patch_size == 0, "img_size must be divisible by patch_size"
+#         num_patches = (img_size // patch_size) ** 2
+#         self.dim = dim
+#         self.expansion_factor = expansion_factor
+#         self.mixer_drop = mixer_drop
+#         self.token_mixer = TokenMixer(num_patches, dim, self.expansion_factor, self.mixer_drop)
+#         self.channel_mixer = ChannelMixer(num_patches, dim, self.expansion_factor, self.mixer_drop)
+
+#     def forward(self, x):
+#         shape = x.shape
+#         if len(shape) == 4:
+#             B, C, H, W = shape
+#             N = H * W
+#             x = torch.flatten(x, start_dim=2).transpose(-2, -1)
+#         else:
+#             B, N, C = shape
+#         x = self.token_mixer(x)
+#         x = self.channel_mixer(x)
+
+#         if len(shape) == 4:
+#             x = x.transpose(-2, -1).reshape(B, C, H, W)
+#         return x
+
+# class ChannelMixer(nn.Module):
+#     def __init__(self, num_patches, num_features, expansion_factor, mixer_drop):
+#         super().__init__()
+#         self.norm = nn.LayerNorm(num_features)
+#         self.mlp = MLP(num_features, expansion_factor, mixer_drop)
+    
+#     def forward(self, x): 
+#         # x.shape = (B, N, C), 서로 다른 channel을 섞음: C->C
+#         residual = x
+#         x = self.norm(x)
+#         x = self.mlp(x)
+#         out = x + residual
+#         return out

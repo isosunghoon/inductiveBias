@@ -43,7 +43,7 @@ class AddPositionEmb(nn.Module):
     def __init__(self, dim=384, spatial_shape=[14, 14]):
         super().__init__()
         if isinstance(spatial_shape, int):
-            spatial_shape = [spatial_shape]x
+            spatial_shape = [spatial_shape]
         if len(spatial_shape) == 1:
             embed_shape = list(spatial_shape) + [dim]
         else:

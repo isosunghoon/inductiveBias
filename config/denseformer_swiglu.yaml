@@ -1,0 +1,11 @@
+model: denseformer
+run_name: denseformer_swiglu
+expansion_factor: 4
+
+drop_path: 0.05
+mixer_drop: 0.05
+label_smoothing: 0.0
+use_layer_scale: true
+
+channel_mixer: swiglu
+mlp_ratio: 2.667
