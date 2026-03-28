@@ -5,6 +5,7 @@ output
 __pycache__
 */__pycache__
 .env
+.mcp.json
 wandb
 
 .omc 
