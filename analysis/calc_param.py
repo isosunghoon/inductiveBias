@@ -7,11 +7,24 @@ import wandb
 from utils.config import get_parser, _apply_yaml
 from train import set_seed, setup
 
+OUTPUT_ROOT = "output"
+BASE_CFG = "config/base.yaml"
 
-MODEL_CONFIGS = {
-    "convformer1": "output/base_model_exp/convformer-2026-03-14_05-12-40/config.yaml",
-    "vit": "output/base_model_exp/convformer-2026-03-14_06-59-45/config.yaml",
-}
+
+def discover_experiments(output_root: str):
+    """output/{project}/{model}-{timestamp}/ 구조를 탐색해 (name, config_cfg) 목록 반환."""
+    experiments = []
+    for project in sorted(os.listdir(output_root)):
+        project_dir = os.path.join(output_root, project)
+        if not os.path.isdir(project_dir):
+            continue
+        for run in sorted(os.listdir(project_dir)):
+            run_dir = os.path.join(project_dir, run)
+            config_cfg = os.path.join(run_dir, "config.yaml")
+            if os.path.isfile(config_cfg):
+                name = f"{project}/{run}"
+                experiments.append((name, config_cfg))
+    return experiments
 
 
 def build_args_from_yaml(base_cfg: str, model_cfg: str):
@@ -37,29 +50,29 @@ def count_parameters(model):
 
 
 def print_param_table(rows):
-    header = f"{'Model':20s} | {'Total':>15s} | {'Trainable':>15s} | {'Non-train':>15s}"
+    name_w = max(len(r[0]) for r in rows) + 2
+    header = f"{'Model':{name_w}s} | {'Total':>15s} | {'Trainable':>15s} | {'Non-train':>15s}"
     print(header)
     print("-" * len(header))
     for name, total, trainable, non_trainable in rows:
-        print(f"{name:20s} | {total:15,d} | {trainable:15,d} | {non_trainable:15,d}")
+        print(f"{name:{name_w}s} | {total:15,d} | {trainable:15,d} | {non_trainable:15,d}")
 
 
 def main():
-    base_cfg = "config/base.yaml"
-
     # wandb는 disabled 모드로 한 번만 초기화 (setup에서 define_metric 사용)
     wandb.init(mode="disabled")
 
-    rows = []
-    for model_name, cfg_path in MODEL_CONFIGS.items():
-        args = build_args_from_yaml(base_cfg, cfg_path)
-        # model 이름이 yaml에서 지정돼 있지 않으면 fallback
-        if getattr(args, "model", None) in (None, ""):
-            args.model = model_name
+    experiments = discover_experiments(OUTPUT_ROOT)
+    if not experiments:
+        print(f"No experiments found under '{OUTPUT_ROOT}/'")
+        return
 
+    rows = []
+    for name, cfg_path in experiments:
+        args = build_args_from_yaml(BASE_CFG, cfg_path)
         model = setup(args)
         total, trainable, non_trainable = count_parameters(model)
-        rows.append((model_name, total, trainable, non_trainable))
+        rows.append((name, total, trainable, non_trainable))
 
     print_param_table(rows)
 
