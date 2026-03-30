@@ -1,2 +1,3 @@
+run_name: vit_d6
 model: vit
 depth: 6

@@ -1,1 +1,2 @@
 model: vit
+epochs: 1000
