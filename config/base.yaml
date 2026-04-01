@@ -31,7 +31,7 @@ use_layer_scale: false
 layer_scale_init_value: 1e-5
 
 # ===== Training =====
-epochs: 500
+epochs: 1000
 train_batch_size: 512
 test_batch_size: 256
 

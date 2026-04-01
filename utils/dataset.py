@@ -162,7 +162,7 @@ def get_dataloader(args):
         # weak & strong 공통: 기본 공간 증강
         if level in ('weak', 'strong'):
             train_transforms.extend([
-                transforms.RandomCrop(32, padding=4),
+                transforms.RandomCrop(args.img_size, padding=4),
                 transforms.RandomHorizontalFlip(),
             ])
 

@@ -107,7 +107,8 @@ def _make_cifar_densenet121(num_classes: int = 100) -> nn.Module:
     )
     # Replace 7×7/2 stem with 3×3/1
     model.features.conv0 = nn.Conv2d(3, 24, kernel_size=3, stride=1, padding=1, bias=False)
-    # Remove initial max-pool
+    # edadaltocg omits norm0 (BN) and pool0 after conv0
+    model.features.norm0 = nn.Identity()
     model.features.pool0 = nn.Identity()
     return model
 
