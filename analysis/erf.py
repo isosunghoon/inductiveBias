@@ -13,6 +13,8 @@ from timm.utils import AverageMeter
 from torchvision import datasets, transforms
 from PIL import Image
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 # from erf.resnet_for_erf import resnet101, resnet152
 # from erf.replknet_for_erf import RepLKNetForERF
 from torch import optim as optim
@@ -51,17 +53,34 @@ def get_input_grad(model, samples):
     grad_map = aggregated.cpu().numpy()
     return grad_map
 
-def make_erf(save_path=None):
-    if save_path is not None:
-        # run 폴더의 config.yaml로 args를 구성 (해당 run과 동일한 모델/설정 사용)
+def _get_args():
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--save_path", type=str, default=None)
+    pre_parser.add_argument("--output_path", type=str, default=None)
+    pre_args, _ = pre_parser.parse_known_args()
+
+    if pre_args.save_path is not None:
         args = parse_args([
-            "--base_config", os.path.join(save_path, "base.yaml"),
-            "--config", os.path.join(save_path, "config.yaml"),
-            "--output_path", save_path,
+            "--base_config", os.path.join(pre_args.save_path, "base.yaml"),
+            "--config", os.path.join(pre_args.save_path, "config.yaml"),
+            "--output_path", pre_args.save_path,
         ])
     else:
         args = parse_args()
-    
+        if pre_args.output_path is not None:
+            args.output_path = pre_args.output_path
+    return args
+
+def make_erf(output_path=None):
+    if output_path is not None:
+        # programmatic call: load config directly from the run folder
+        args = parse_args([
+            "--base_config", os.path.join(output_path, "base.yaml"),
+            "--config", os.path.join(output_path, "config.yaml"),
+            "--output_path", output_path,
+        ])
+    else:
+        args = _get_args()
 
     args.train_batch_size = BATCH_SIZE
 
@@ -72,29 +91,23 @@ def make_erf(save_path=None):
     model.cuda()
     model.eval()
 
-    train_loader, test_loader, mixup_fn = get_dataloader(args)
+    train_loader, _, _ = get_dataloader(args)
     sample_loader = make_subset_loader(args, train_loader, ratio=RATIO)
     max_images = NUM_IMAGES if NUM_IMAGES is not None else len(sample_loader.dataset)
     print(f"ERF: accumulating over up to {max_images} images (NUM_IMAGES={NUM_IMAGES}, ratio={RATIO})")
 
-    optimizer = optim.SGD(model.parameters(), lr=0, weight_decay=0)
-
     meter = AverageMeter()
-    optimizer.zero_grad()
 
-    iterable = sample_loader
     if NUM_IMAGES is not None:
-        # NUM_IMAGES가 설정되면 tqdm total을 그 값으로 두고, 아니면 전체 서브셋 크기를 사용합니다.
         total = min(NUM_IMAGES, len(sample_loader.dataset))
     else:
         total = len(sample_loader.dataset)
 
-    for samples, _ in tqdm(iterable, total=total, desc="Computing ERF"):
+    for samples, _ in tqdm(sample_loader, total=total, desc="Computing ERF"):
         if NUM_IMAGES is not None and meter.count >= NUM_IMAGES:
             break
         samples = samples.cuda(non_blocking=True)
         samples.requires_grad = True
-        optimizer.zero_grad()
         contribution_scores = get_input_grad(model, samples)
 
         if np.isnan(np.sum(contribution_scores)):
@@ -102,12 +115,36 @@ def make_erf(save_path=None):
             continue
         meter.update(contribution_scores)
 
-    erf_npy_path = os.path.join(args.output_path, "erf.npy")
-    os.makedirs(args.output_path, exist_ok=True)
+    run_name = os.path.basename(os.path.normpath(args.output_path))
+    save_dir = os.path.join("analysis", "erf_results")
+    os.makedirs(save_dir, exist_ok=True)
+    erf_npy_path = os.path.join(save_dir, f"{run_name}.npy")
     np.save(erf_npy_path, meter.avg)
     print(f"Saved ERF matrix to {erf_npy_path} (avg over {meter.count} images)")
     return erf_npy_path
 
 
+def create_graph(npy_path):
+    """Load an erf.npy file and save a heatmap plot next to it."""
+    erf = np.load(npy_path)
+
+    # Normalize to [0, 1] for visualization
+    erf = erf - erf.min()
+    erf = erf / (erf.max() + 1e-8)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    im = ax.imshow(erf, cmap="inferno", norm=mcolors.PowerNorm(gamma=0.4))
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title(os.path.splitext(os.path.basename(npy_path))[0])
+    ax.axis("off")
+
+    plot_path = os.path.splitext(npy_path)[0] + ".png"
+    fig.savefig(plot_path, bbox_inches="tight", dpi=150)
+    plt.close(fig)
+    print(f"Saved ERF plot to {plot_path}")
+    return plot_path
+
+
 if __name__ == '__main__':
-    make_erf()
+    npy_path = make_erf()
+    create_graph(npy_path)

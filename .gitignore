@@ -12,3 +12,4 @@ wandb
 .claude
 CLAUDE.md
 analysis/cka_results/
+analysis/erf_results/
