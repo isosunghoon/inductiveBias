@@ -1,116 +1,180 @@
 """
-pretrained_val.py — CIFAR-100 pretrained baseline evaluation
+pretrained_val.py — CIFAR-100 pretrained baseline evaluation (edadaltocg)
 
-Sources:
-  - torch.hub (chenyaofo/pytorch-cifar-models): ResNet, VGG, MobileNet, etc.
-      native 32×32, CIFAR-100 normalization
-  - timm HuggingFace Hub: ViT variants fine-tuned on CIFAR-100
-      224×224, ImageNet normalization
+All models from edadaltocg, consistent training (300 epochs, SGD, CosineAnnealingLR):
+  - resnet18/34/50   : ~79-81% test acc  (torchvision arch + CIFAR stem)
+  - vgg16_bn         : timm features + single FC head
+  - densenet121      : torchvision DenseNet, k=12, C0=24, CIFAR stem
+  - vit_base_p16_224 : ViT-Base/16, ImageNet-21k → CIFAR-100 ft, ~93%
 
 Usage:
-  # All default models
-  python pretrained_val.py
-
-  # Specific models only
-  python pretrained_val.py --models cifar100_resnet56 cifar100_vgg16_bn
-
-  # Skip train-set evaluation (faster)
-  python pretrained_val.py --no_train
+  python pretrained_val.py                      # all models
+  python pretrained_val.py --models resnet50 vit_base
+  python pretrained_val.py --no_train           # test set only
 """
 
 import argparse
 import torch
 import torch.nn as nn
-from torchvision import transforms, datasets
+from torchvision import datasets
+from torchvision.transforms import Compose, Resize, ToTensor, Normalize
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import timm
+import torchvision.models as tv_models
+from torchvision.models.densenet import DenseNet as TvDenseNet
+from huggingface_hub import hf_hub_download
+
 # ---------------------------------------------------------------------------
-# Normalization constants
+# Constants
 # ---------------------------------------------------------------------------
 
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
 CIFAR100_STD  = (0.2675, 0.2565, 0.2761)
-
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD  = (0.229, 0.224, 0.225)
 
+VIT_BASE_URL = (
+    "https://huggingface.co/edadaltocg/vit_base_patch16_224_in21k_ft_cifar100"
+    "/resolve/main/pytorch_model.bin"
+)
+
 # ---------------------------------------------------------------------------
-# Model registry
-# Each entry: (display_name, source, hub_name, img_size, norm)
-#   source  : 'hub'  → torch.hub chenyaofo/pytorch-cifar-models
-#             'timm' → timm.create_model with hf_hub: prefix
-#   norm    : 'cifar' | 'imagenet'
+# Model registry  (display_name, hf_repo, loader, img_size, mean, std)
 # ---------------------------------------------------------------------------
 
 MODEL_REGISTRY = [
-    # ── ResNet (chenyaofo, 32×32) ──────────────────────────────────────────
-    ("resnet20",        "hub",  "cifar100_resnet20",   32,  "cifar"),
-    ("resnet32",        "hub",  "cifar100_resnet32",   32,  "cifar"),
-    ("resnet44",        "hub",  "cifar100_resnet44",   32,  "cifar"),
-    ("resnet56",        "hub",  "cifar100_resnet56",   32,  "cifar"),
-    # ── VGG-BN (chenyaofo, 32×32) ──────────────────────────────────────────
-    ("vgg11_bn",        "hub",  "cifar100_vgg11_bn",   32,  "cifar"),
-    ("vgg13_bn",        "hub",  "cifar100_vgg13_bn",   32,  "cifar"),
-    ("vgg16_bn",        "hub",  "cifar100_vgg16_bn",   32,  "cifar"),
-    ("vgg19_bn",        "hub",  "cifar100_vgg19_bn",   32,  "cifar"),
-    # ── ViT (timm HF Hub, 224×224) ─────────────────────────────────────────
-    ("vit_tiny_p16",    "timm", "hf_hub:edadaltocg/vit_tiny_patch16_224_cifar100",  224, "imagenet"),
-    ("vit_small_p16",   "timm", "hf_hub:edadaltocg/vit_small_patch16_224_cifar100", 224, "imagenet"),
+    ("resnet18",    "edadaltocg/resnet18_cifar100",    "tv_resnet18",   32,  CIFAR100_MEAN, CIFAR100_STD),
+    ("resnet34",    "edadaltocg/resnet34_cifar100",    "tv_resnet34",   32,  CIFAR100_MEAN, CIFAR100_STD),
+    ("resnet50",    "edadaltocg/resnet50_cifar100",    "tv_resnet50",   32,  CIFAR100_MEAN, CIFAR100_STD),
+    ("vgg16_bn",    "edadaltocg/vgg16_bn_cifar100",    "cifar_vgg16bn", 32,  CIFAR100_MEAN, CIFAR100_STD),
+    ("densenet121", "edadaltocg/densenet121_cifar100", "cifar_dn121",   32,  CIFAR100_MEAN, CIFAR100_STD),
+    ("vit_base",    None,                              "url_vit",       224, IMAGENET_MEAN, IMAGENET_STD),
 ]
 
-# Short alias → registry entry (for --models CLI filter)
-_ALIAS = {entry[0]: entry for entry in MODEL_REGISTRY}
-# Also allow raw hub names like "cifar100_resnet56"
-_HUB_NAME = {entry[2]: entry for entry in MODEL_REGISTRY}
+_ALIAS = {e[0]: e for e in MODEL_REGISTRY}
 
 
 # ---------------------------------------------------------------------------
-# Data loading
+# Architecture helpers
 # ---------------------------------------------------------------------------
 
-def _make_loader(data_path, train, img_size, norm, batch_size, num_workers):
-    mean, std = (IMAGENET_MEAN, IMAGENET_STD) if norm == "imagenet" else (CIFAR100_MEAN, CIFAR100_STD)
-    t = []
-    if img_size != 32:
-        t.append(transforms.Resize((img_size, img_size)))
-    t += [transforms.ToTensor(), transforms.Normalize(mean, std)]
-    dataset = datasets.CIFAR100(
-        root=data_path, train=train, download=True,
-        transform=transforms.Compose(t),
+def _patch_resnet_cifar(model):
+    """Replace 7×7/2 stem + maxpool with 3×3/1 + Identity for 32×32 input."""
+    in_c  = model.conv1.in_channels
+    out_c = model.conv1.out_channels
+    model.conv1  = nn.Conv2d(in_c, out_c, kernel_size=3, stride=1, padding=1, bias=False)
+    model.maxpool = nn.Identity()
+    return model
+
+
+class _VGGCIFARHead(nn.Module):
+    """Global-avg-pool → single Linear, matching edadaltocg's head.fc keys."""
+    def __init__(self, in_features: int, num_classes: int):
+        super().__init__()
+        self.fc = nn.Linear(in_features, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.mean([-2, -1])   # global avg pool
+        return self.fc(x)
+
+
+class _VGGCIFARModel(nn.Module):
+    """timm VGG16-BN features + lightweight head (no pre_logits FC blocks)."""
+    def __init__(self, num_classes: int = 100):
+        super().__init__()
+        base = timm.create_model("vgg16_bn", pretrained=False, num_classes=0)
+        self.features = base.features          # preserves features.* key names
+        self.head = _VGGCIFARHead(512, num_classes)  # matches head.fc.* keys
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.features(x))
+
+
+def _make_cifar_densenet121(num_classes: int = 100) -> nn.Module:
+    """
+    DenseNet-121 with CIFAR settings used by edadaltocg:
+      growth_rate=12, num_init_features=24, block_config=(6,12,24,16)
+      stem: Conv2d(3, 24, 3, stride=1, padding=1)  — no max-pool
+    Uses torchvision DenseNet so classifier.* keys match.
+    """
+    model = TvDenseNet(
+        growth_rate=12,
+        block_config=(6, 12, 24, 16),
+        num_init_features=24,
+        num_classes=num_classes,
     )
-    kw = dict(num_workers=num_workers, pin_memory=True, persistent_workers=num_workers > 0)
-    if num_workers > 0:
-        kw["prefetch_factor"] = 4
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False, **kw)
+    # Replace 7×7/2 stem with 3×3/1
+    model.features.conv0 = nn.Conv2d(3, 24, kernel_size=3, stride=1, padding=1, bias=False)
+    # Remove initial max-pool
+    model.features.pool0 = nn.Identity()
+    return model
 
 
 # ---------------------------------------------------------------------------
 # Model loading
 # ---------------------------------------------------------------------------
 
-def _load_hub(hub_name):
-    return torch.hub.load(
-        "chenyaofo/pytorch-cifar-models",
-        hub_name,
-        pretrained=True,
-        verbose=False,
-        trust_repo=True,
+def _load_from_hf(model: nn.Module, hf_repo: str) -> nn.Module:
+    path = hf_hub_download(hf_repo, "pytorch_model.bin")
+    state_dict = torch.load(path, map_location="cpu")
+    model.load_state_dict(state_dict)
+    return model
+
+
+def load_model(_display_name: str, hf_repo, loader: str) -> nn.Module:
+    if loader == "tv_resnet18":
+        model = _patch_resnet_cifar(tv_models.resnet18(num_classes=100))
+        return _load_from_hf(model, hf_repo)
+
+    if loader == "tv_resnet34":
+        model = _patch_resnet_cifar(tv_models.resnet34(num_classes=100))
+        return _load_from_hf(model, hf_repo)
+
+    if loader == "tv_resnet50":
+        model = _patch_resnet_cifar(tv_models.resnet50(num_classes=100))
+        return _load_from_hf(model, hf_repo)
+
+    if loader == "cifar_vgg16bn":
+        model = _VGGCIFARModel(num_classes=100)
+        return _load_from_hf(model, hf_repo)
+
+    if loader == "cifar_dn121":
+        model = _make_cifar_densenet121(num_classes=100)
+        return _load_from_hf(model, hf_repo)
+
+    if loader == "url_vit":
+        base = timm.create_model("vit_base_patch16_224.orig_in21k_ft_in1k", pretrained=False)
+        base.head = nn.Linear(base.head.in_features, 100)
+        state_dict = torch.hub.load_state_dict_from_url(
+            VIT_BASE_URL,
+            map_location="cpu",
+            file_name="vit_base_patch16_224_in21k_ft_cifar100.pth",
+        )
+        base.load_state_dict(state_dict)
+        return base
+
+    raise ValueError(f"Unknown loader: {loader}")
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def _make_loader(data_path, train, img_size, mean, std, batch_size, num_workers):
+    t = []
+    if img_size != 32:
+        t.append(Resize((img_size, img_size)))
+    t += [ToTensor(), Normalize(mean, std)]
+    dataset = datasets.CIFAR100(
+        root=data_path, train=train, download=True,
+        transform=Compose(t),
     )
-
-
-def _load_timm(hub_name):
-    import timm
-    return timm.create_model(hub_name, pretrained=True)
-
-
-def load_model(source, hub_name):
-    if source == "hub":
-        return _load_hub(hub_name)
-    elif source == "timm":
-        return _load_timm(hub_name)
-    else:
-        raise ValueError(f"Unknown source: {source}")
+    kw = dict(num_workers=num_workers, pin_memory=True, persistent_workers=num_workers > 0)
+    if num_workers > 0:
+        kw["prefetch_factor"] = 4
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False, **kw)
 
 
 # ---------------------------------------------------------------------------
@@ -124,31 +188,16 @@ def evaluate(model, loader, device):
     for x, y in tqdm(loader, leave=False, dynamic_ncols=True):
         x, y = x.to(device), y.to(device)
         out = model(x)
-        # timm models return logits directly; some may return tuples
         if isinstance(out, (tuple, list)):
             out = out[0]
-        pred = out.argmax(1)
-        correct += pred.eq(y).sum().item()
+        correct += out.argmax(1).eq(y).sum().item()
         total += y.size(0)
     return 100.0 * correct / total
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Table printing
 # ---------------------------------------------------------------------------
-
-def _resolve_models(names):
-    """Resolve CLI model names to registry entries."""
-    resolved = []
-    for name in names:
-        if name in _ALIAS:
-            resolved.append(_ALIAS[name])
-        elif name in _HUB_NAME:
-            resolved.append(_HUB_NAME[name])
-        else:
-            print(f"  [warn] unknown model '{name}', skipping")
-    return resolved
-
 
 def _print_table(rows, show_train):
     name_w = max(len(r[0]) for r in rows) + 2
@@ -163,62 +212,73 @@ def _print_table(rows, show_train):
     for name, train_acc, test_acc in rows:
         if test_acc is None:
             fail = f"{'ERROR':>10s}"
-            print(f"{name:{name_w}s} | {fail}" + (f" | {fail}" if show_train else ""))
+            row = f"{name:{name_w}s} | {fail}" + (f" | {fail}" if show_train else "")
         elif show_train:
             tr = f"{train_acc:9.2f}%" if train_acc is not None else f"{'N/A':>10s}"
-            print(f"{name:{name_w}s} | {tr} | {test_acc:9.2f}%")
+            row = f"{name:{name_w}s} | {tr} | {test_acc:9.2f}%"
         else:
-            print(f"{name:{name_w}s} | {test_acc:9.2f}%")
+            row = f"{name:{name_w}s} | {test_acc:9.2f}%"
+        print(row)
     print("=" * len(header))
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate pretrained CIFAR-100 baselines")
-    parser.add_argument("--data_path",    type=str, default="./data")
-    parser.add_argument("--batch_size",   type=int, default=256)
-    parser.add_argument("--num_workers",  type=int, default=4)
-    parser.add_argument("--no_train",     action="store_true", help="Skip train-set evaluation")
+    parser = argparse.ArgumentParser(description="Evaluate pretrained CIFAR-100 baselines (edadaltocg)")
+    parser.add_argument("--data_path",   type=str, default="./data")
+    parser.add_argument("--batch_size",  type=int, default=256)
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--no_train",    action="store_true", help="Skip train-set evaluation")
     parser.add_argument(
         "--models", type=str, nargs="+", default=None,
-        help=(
-            "Models to evaluate (by short name or hub name). "
-            "Defaults to all registry entries. "
-            f"Available: {', '.join(e[0] for e in MODEL_REGISTRY)}"
-        ),
+        help=f"Models to run. Available: {', '.join(e[0] for e in MODEL_REGISTRY)}",
     )
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
-    entries = _resolve_models(args.models) if args.models else MODEL_REGISTRY
+    if args.models:
+        entries = []
+        for name in args.models:
+            if name in _ALIAS:
+                entries.append(_ALIAS[name])
+            else:
+                print(f"  [warn] unknown model '{name}', skipping")
+    else:
+        entries = MODEL_REGISTRY
 
     results = []
-    for display_name, source, hub_name, img_size, norm in entries:
-        print(f"\n[{display_name}] loading from {source} ({hub_name}) ...")
+    for display_name, hf_repo, loader, img_size, mean, std in entries:
+        print(f"\n[{display_name}] loading ...")
         try:
-            model = load_model(source, hub_name).to(device)
+            model = load_model(display_name, hf_repo, loader).to(device)
         except Exception as e:
             print(f"  FAILED: {e}")
             results.append((display_name, None, None))
             continue
 
         n_params = sum(p.numel() for p in model.parameters())
-        print(f"  params: {n_params:,}  |  img_size: {img_size}  |  norm: {norm}")
+        print(f"  params: {n_params:,}  |  input: {img_size}×{img_size}")
 
-        test_loader = _make_loader(args.data_path, train=False,
-                                   img_size=img_size, norm=norm,
-                                   batch_size=args.batch_size,
-                                   num_workers=args.num_workers)
+        test_loader = _make_loader(
+            args.data_path, train=False,
+            img_size=img_size, mean=mean, std=std,
+            batch_size=args.batch_size, num_workers=args.num_workers,
+        )
         test_acc = evaluate(model, test_loader, device)
         print(f"  test  acc: {test_acc:.2f}%")
 
         train_acc = None
         if not args.no_train:
-            train_loader = _make_loader(args.data_path, train=True,
-                                        img_size=img_size, norm=norm,
-                                        batch_size=args.batch_size,
-                                        num_workers=args.num_workers)
+            train_loader = _make_loader(
+                args.data_path, train=True,
+                img_size=img_size, mean=mean, std=std,
+                batch_size=args.batch_size, num_workers=args.num_workers,
+            )
             train_acc = evaluate(model, train_loader, device)
             print(f"  train acc: {train_acc:.2f}%")
 
