@@ -210,7 +210,6 @@ def train(args, model, run=None):
         if epoch % args.eval_interval == 0:
             train_acc = validate(args, model, train_loader)
             val_acc = validate(args, model, test_loader)
-            train_acc = validate(args, model, train_loader)
             print(f"[Eval] epoch {epoch}/{args.epochs} | train_acc: {train_acc:.2f}% | val_acc: {val_acc:.2f}%)")
             if train_acc > best_train_acc:
                 best_train_acc = train_acc
