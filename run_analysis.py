@@ -10,7 +10,7 @@ from analysis.pipeline import run_pipeline
 # ---------------------------------------------------------------------------
 # Import analysis functions here as they are created
 # ---------------------------------------------------------------------------
-# from analysis.erf_fn    import analyze_erf
+from analysis.erf_once import analyze_erf
 # from analysis.cka_fn    import analyze_cka
 # from analysis.dis_occ_fn import analyze_dis_occ
 
@@ -19,14 +19,14 @@ from analysis.pipeline import run_pipeline
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 
-PROJECT_PATH = "output/base_model_exp"   # folder containing model run dirs
+PROJECT_PATH = "output/for_analysis"   # folder containing model run dirs
 CKPT_NAME    = "best.pt"
 OUTPUT_ROOT  = "analysis_output"
 
 # experiment name → analysis function
 # each key becomes a top-level folder under analysis_output/
 ANALYSIS_FNS = {
-    # "erf":     analyze_erf,
+    "erf":     analyze_erf,
     # "dis_occ": analyze_dis_occ,
 }
 
