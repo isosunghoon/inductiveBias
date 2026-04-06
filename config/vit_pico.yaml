@@ -1,6 +1,0 @@
-run_name: vit_d3_e96
-model: vit
-depth: 3
-epochs: 1000
-attn_head_dim: 32
-embed_dim: 96
