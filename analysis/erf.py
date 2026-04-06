@@ -19,13 +19,9 @@ import matplotlib.colors as mcolors
 # from erf.replknet_for_erf import RepLKNetForERF
 from torch import optim as optim
 
-from utils.config import parse_args
+from utils.config import parse_args, _apply_yaml
 from utils.dataset import get_dataloader, make_subset_loader
 from utils.build_model import build_model
-
-RATIO = 0.05  # subset ratio of train set when NUM_IMAGES is None
-BATCH_SIZE = 1
-NUM_IMAGES = 1000  # if None: use full subset from ratio; else: stop after this many images
 
 # 새로운 forward 함수 정의 (ERF 측정용: GAP 제거 버전)
 def erf_forward(self, x):
@@ -55,34 +51,27 @@ def get_input_grad(model, samples):
 
 def _get_args():
     pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--save_path", type=str, default=None)
     pre_parser.add_argument("--output_path", type=str, default=None)
-    pre_args, _ = pre_parser.parse_known_args()
+    pre_parser.add_argument("--config_path", type=str, default=None)
+    pre_parser.add_argument("--num_images", type=int, default = 100)
+    pre_parser.add_argument("--ratio", type=float, default = 1)         # The ratio of len(sample dataset) when num_images is not small
+    pre_parser.add_argument("--train_batch_size", type=int, default = 1)
+    pre_args, remaining = pre_parser.parse_known_args()
 
-    if pre_args.save_path is not None:
-        args = parse_args([
-            "--base_config", os.path.join(pre_args.save_path, "base.yaml"),
-            "--config", os.path.join(pre_args.save_path, "config.yaml"),
-            "--output_path", pre_args.save_path,
-        ])
-    else:
-        args = parse_args()
-        if pre_args.output_path is not None:
-            args.output_path = pre_args.output_path
+    args = parse_args(remaining)
+
+    if pre_args.config_path is not None:
+        _apply_yaml(args, pre_args.config_path)
+
+    args.output_path = pre_args.output_path
+    args.num_images = pre_args.num_images
+    args.ratio = pre_args.ratio
+    args.train_batch_size = pre_args.train_batch_size
     return args
 
 def make_erf(output_path=None):
-    if output_path is not None:
-        # programmatic call: load config directly from the run folder
-        args = parse_args([
-            "--base_config", os.path.join(output_path, "base.yaml"),
-            "--config", os.path.join(output_path, "config.yaml"),
-            "--output_path", output_path,
-        ])
-    else:
-        args = _get_args()
+    args = _get_args()
 
-    args.train_batch_size = BATCH_SIZE
 
     model = build_model(args)
     model = getattr(model, "_orig_mod", model)  # unwrap torch.compile if present
@@ -92,19 +81,16 @@ def make_erf(output_path=None):
     model.eval()
 
     train_loader, _, _ = get_dataloader(args)
-    sample_loader = make_subset_loader(args, train_loader, ratio=RATIO)
-    max_images = NUM_IMAGES if NUM_IMAGES is not None else len(sample_loader.dataset)
-    print(f"ERF: accumulating over up to {max_images} images (NUM_IMAGES={NUM_IMAGES}, ratio={RATIO})")
+    sample_loader = make_subset_loader(args, train_loader, ratio=args.ratio)
+    max_images = args.num_images
+    print(f"ERF: accumulating over up to {max_images} images (num_images={args.num_images}, ratio={args.ratio})")
 
     meter = AverageMeter()
 
-    if NUM_IMAGES is not None:
-        total = min(NUM_IMAGES, len(sample_loader.dataset))
-    else:
-        total = len(sample_loader.dataset)
+    total = min(args.num_images, len(sample_loader.dataset))
 
     for samples, _ in tqdm(sample_loader, total=total, desc="Computing ERF"):
-        if NUM_IMAGES is not None and meter.count >= NUM_IMAGES:
+        if meter.count >= args.num_images:
             break
         samples = samples.cuda(non_blocking=True)
         samples.requires_grad = True
