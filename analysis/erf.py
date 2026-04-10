@@ -71,9 +71,11 @@ def choose_anchor_points(h_out=8, w_out=8, mode="random", num_anchors=8, custom_
         idx = np.random.choice(len(all_points), size=num_anchors, replace=False)
         return [all_points[i] for i in idx]
     
+    if mode == "all":
+        return [(y,x) for y in range(h_out) for x in range(w_out)]
+    
     if mode == "custom":
-        all_points = [(y,x) for y,x in zip(custom_y_values, custom_x_values)]
-        return all_points
+        return [(y,x) for y,x in zip(custom_y_values, custom_x_values)]
 
 def compute_long_range_metric(erf_map, anchor, distance_metric="taxi", patch_size=4):
     global ck
@@ -107,7 +109,6 @@ def compute_long_range_metric(erf_map, anchor, distance_metric="taxi", patch_siz
 
     return float((token_weights*dist).sum())
 
-
 def _get_args():
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--output_path", type=str, default=None)
@@ -138,160 +139,102 @@ def _get_args():
     args.custom_y_values = pre_args.custom_y_values
     return args
 
-def make_erf(output_path=None):
-    args = _get_args()
-    np.random.seed(args.seed)
-
-    model = build_model(args)
-    model = getattr(model, "_orig_mod", model)  # unwrap torch.compile if present
-    model.forward = types.MethodType(erf_forward, model)
-
-    model.cuda()
-    model.eval()
-
-    train_loader, _, _ = get_dataloader(args)
-    sample_loader = make_subset_loader(args, train_loader, ratio=args.ratio)
-    max_images = args.num_images
-    print(f"ERF: accumulating over up to {max_images} images (num_images={args.num_images}, ratio={args.ratio})")
-
-    total = min(args.num_images, len(sample_loader.dataset))
-
-    first_batch = next(iter(sample_loader))
-    first_samples = first_batch[0].cuda(non_blocking=True)
-    first_samples.requires_grad_(True)
-
-    with torch.enable_grad():
-        test_out = model(first_samples)
-    _, _, h_out, w_out = test_out.shape
-
-    print(args.custom_x_values)
-
-    anchors = choose_anchor_points(h_out, w_out, args.anchor_mode, args.num_anchors, args.custom_x_values, args.custom_y_values)
-    
-    print(f"Selected anchors: {anchors}")
-
-    _, _, h_in, w_in = first_samples.shape
-
-    accum = {anchor: np.zeros((h_in, w_in), dtype=np.float64) for anchor in anchors}
-    count = 0
-
-    for samples, _ in tqdm(sample_loader, total=total, desc="Computing ERF"):
-        if count >= args.num_images:
-            break
-        samples = samples.cuda(non_blocking=True)
-        samples.requires_grad = True
-        anchor_to_maps = get_input_grad_per_anchors(model, samples, anchors)
-
-        bsz = samples.shape[0]
-
-        for anchor in anchors:
-            single_map = anchor_to_maps[anchor]
-            if np.isnan(np.sum(single_map)):
-                print(f"got NAN, skip image")
-            accum[anchor] += single_map
-            
-        count += bsz
-
-    avg_maps = {}
-    metrics = []
-
-    for anchor in anchors:
-        avg_map = accum[anchor] / count
-
-        avg_maps[anchor] = avg_map
-
-        metrics.append({
-            "y": anchor[0],
-            "x": anchor[1],
-            "long_range_metric": compute_long_range_metric(avg_map, anchor, args.distance_metric),
-        })
-
-    overall_dis = 0
-    for metric in metrics:
-        overall_dis += metric["long_range_metric"]
-
-    overall_dis = overall_dis / len(metrics)
-
-    print(f"overall long range metric: {overall_dis} tokens")
-    run_name = os.path.basename(os.path.normpath(args.output_path))
-    save_dir = os.path.join("analysis_output", "erf")
-    os.makedirs(save_dir, exist_ok=True)
-
-    npz_dict = {}
-    for anchor, avg_map in avg_maps.items():
-        npz_dict[f"anchor_{anchor[0]}_{anchor[1]}"] = avg_map
-    np.savez_compressed(os.path.join(save_dir, "anchor_to_maps.npz"), **npz_dict)
-
-    with open(os.path.join(save_dir, "metrics.json"), "w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
-
-    return save_dir, avg_maps, metrics
-
 def normalize_map(erf):
     erf = erf.astype(np.float64)
     erf = erf - erf.min()
     denom = erf.max() + 1e-8
     return erf / denom
 
-def save_individual_plots(save_dir, avg_maps):
+def _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size):
+    """Return (unique_dists, weight_per_dist) arrays for a single anchor."""
+    h, w = erf_map.shape
+    H, W = h // patch_size, w // patch_size
+    py, px = anchor
+
+    token_weights = np.zeros((H, W))
+    for i in range(h):
+        for j in range(w):
+            token_weights[i // patch_size, j // patch_size] += erf_map[i, j]
+    total = token_weights.sum()
+    if total > 0:
+        token_weights /= total
+
+    yy, xx = np.indices((H, W), dtype=np.float64)
+    if distance_metric == "taxi":
+        dist = np.abs(yy - py) + np.abs(xx - px)
+    else:
+        dist = np.sqrt((yy - py) ** 2 + (xx - px) ** 2)
+
+    dist_flat, weight_flat = dist.flatten(), token_weights.flatten()
+    unique_dists = np.unique(dist_flat)
+    weight_per_dist = np.array([weight_flat[dist_flat == d].mean() for d in unique_dists])
+    return unique_dists, weight_per_dist
+
+def _make_weight_per_dis_fig(avg_maps, average=True, distance_metric="taxi", patch_size=4):
+    """
+    Build and return the weight-per-distance figure (does not save).
+    average=True  -> average weight-per-distance across all anchors, one line.
+    average=False -> one line per anchor.
+    """
+    fig, ax = plt.subplots(figsize=(7, 4))
+
+    if average:
+        # Collect weight arrays per unique distance, then average across anchors
+        dist_to_weights = {}
+        for anchor, erf_map in avg_maps.items():
+            unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
+            for d, w in zip(unique_dists, weight_per_dist):
+                dist_to_weights.setdefault(d, []).append(w)
+
+        all_dists = np.array(sorted(dist_to_weights.keys()))
+        avg_weights = np.array([np.mean(dist_to_weights[d]) for d in all_dists])
+        ax.plot(all_dists, avg_weights, marker="o")
+        ax.set_title("Weight per distance (averaged over anchors)")
+    else:
+        for anchor, erf_map in avg_maps.items():
+            unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
+            ax.plot(unique_dists, weight_per_dist, marker="o", label=f"anchor {anchor}")
+        ax.legend(fontsize=7)
+        ax.set_title("Weight per distance from anchor")
+
+    ax.set_xlabel(f"Distance ({distance_metric})")
+    ax.set_ylabel("Total weight")
+    return fig
+
+def make_individual_plots(avg_maps, patch_size=4):
+    """
+    Build one ERF heatmap figure per anchor at token resolution and return a list of AnalysisResult objects.
+    Each token value is the average of the pixels that fall within that patch.
+    Intended for use when anchor_mode == "custom".
+    """
+    from analysis.pipeline import AnalysisResult
+
+    results = []
     for anchor, erf in avg_maps.items():
-        erf_vis = normalize_map(erf)
+        h, w = erf.shape
+        H, W = h // patch_size, w // patch_size
+
+        token_map = np.zeros((H, W), dtype=np.float64)
+        for i in range(h):
+            for j in range(w):
+                token_map[i // patch_size, j // patch_size] += erf[i, j]
+        token_map /= (patch_size * patch_size)
+
+        token_vis = normalize_map(token_map)
 
         fig, ax = plt.subplots(figsize=(5, 5))
-        im = ax.imshow(erf_vis, cmap="inferno", norm=mcolors.PowerNorm(gamma=0.4))
+        im = ax.imshow(token_vis, cmap="inferno", norm=mcolors.PowerNorm(gamma=0.4))
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         ax.set_title(f"Anchor {anchor}")
         ax.axis("off")
 
-        plot_path = os.path.join(save_dir, f"erf_anchor_{anchor[0]}_{anchor[1]}.png")
-        fig.savefig(plot_path, bbox_inches="tight", dpi=150)
-        plt.close(fig)
-
-def _make_weight_per_dis_fig(avg_maps, distance_metric="taxi", patch_size=4):
-    """Build and return the weight-per-distance figure (does not save)."""
-    fig, ax = plt.subplots(figsize=(7, 4))
-
-    for anchor, erf_map in avg_maps.items():
-        h, w = erf_map.shape
-        H, W = h // patch_size, w // patch_size
-        py, px = anchor
-
-        token_weights = np.zeros((H, W))
-        for i in range(h):
-            for j in range(w):
-                token_weights[i // patch_size, j // patch_size] += erf_map[i, j]
-        total = token_weights.sum()
-        if total > 0:
-            token_weights /= total
-
-        yy, xx = np.indices((H, W), dtype=np.float64)
-        if distance_metric == "taxi":
-            dist = np.abs(yy - py) + np.abs(xx - px)
-        else:
-            dist = np.sqrt((yy - py) ** 2 + (xx - px) ** 2)
-
-        dist_flat, weight_flat = dist.flatten(), token_weights.flatten()
-        unique_dists = np.unique(dist_flat)
-        weight_per_dist = [weight_flat[dist_flat == d].sum() for d in unique_dists]
-        ax.plot(unique_dists, weight_per_dist, marker="o", label=f"anchor {anchor}")
-
-    ax.set_xlabel(f"Distance ({distance_metric})")
-    ax.set_ylabel("Total weight")
-    ax.set_title("Weight per distance from anchor")
-    ax.legend(fontsize=7)
-    return fig
-
-
-def save_weight_per_dis_plot(save_dir, avg_maps, distance_metric="taxi", patch_size=4):
-    fig = _make_weight_per_dis_fig(avg_maps, distance_metric, patch_size)
-    plot_path = os.path.join(save_dir, "weight_per_distance.png")
-    fig.savefig(plot_path, bbox_inches="tight", dpi=150)
-    plt.close(fig)
-    print(f"Saved weight-per-distance plot to {plot_path}")
+        results.append(AnalysisResult(f"erf_anchor_{anchor[0]}_{anchor[1]}", fig, ".png"))
+    return results
 
 def analyze_erf(args, model, num_images=100, ratio=1.0,
                 anchor_mode="center", num_anchors=4,
-                distance_metric="taxi", patch_size=4, **kwargs):
+                distance_metric="taxi", patch_size=4, average=True, 
+                custom_x_values=[], custom_y_values=[], **kwargs):
     """Pipeline-compatible ERF analysis. Returns list[AnalysisResult]."""
     from analysis.pipeline import AnalysisResult
 
@@ -317,7 +260,7 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
     _, _, h_out, w_out = test_out.shape
     _, _, h_in, w_in = first_samples.shape
 
-    anchors = choose_anchor_points(h_out, w_out, anchor_mode, num_anchors)
+    anchors = choose_anchor_points(h_out, w_out, anchor_mode, num_anchors, custom_x_values, custom_y_values)
     print(f"Selected anchors: {anchors}")
 
     accum = {anchor: np.zeros((h_in, w_in), dtype=np.float64) for anchor in anchors}
@@ -347,16 +290,19 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
     overall_dis = sum(m["long_range_metric"] for m in metrics) / len(metrics)
     print(f"overall long range metric: {overall_dis} tokens")
 
-    results = [
+    results = []
+    '''
+    # Skip this part cause we don't need to store every erf maps per anchor, in general.
+    results.append(
         AnalysisResult(f"erf_anchor_{a[0]}_{a[1]}", m, ".npy")
         for a, m in avg_maps.items()
-    ]
-    results.append(AnalysisResult("metrics", json.dumps(metrics, indent=2), ".txt"))
-    results.append(AnalysisResult("weight_per_distance", _make_weight_per_dis_fig(avg_maps, distance_metric, patch_size), ".png"))
+    )
+    '''
+    results.append(AnalysisResult(f"metrics_{overall_dis}", json.dumps(metrics, indent=2), ".txt"))
+    results.append(AnalysisResult("weight_per_distance"+("" if average else "_by_anchor"), _make_weight_per_dis_fig(avg_maps, average, distance_metric, patch_size), ".png")) 
+    
+    if anchor_mode == "custom":
+        results.extend(make_individual_plots(avg_maps, patch_size))
+
+    
     return results
-
-
-if __name__ == '__main__':
-    save_dir, avg_maps, metrics = make_erf()
-    # save_individual_plots(save_dir, avg_maps)
-    save_weight_per_dis_plot(save_dir, avg_maps)

@@ -124,6 +124,9 @@ def analyze_loss_landscape(
     """
     from analysis.pipeline import AnalysisResult
 
+    # Unwrap torch.compile — pyhessian needs double backward which aot_autograd doesn't support
+    model = getattr(model, "_orig_mod", model)
+
     # Override batch size; keep fp16 flag if already set
     args.train_batch_size = batch_size
     if not hasattr(args, "fp16"):
