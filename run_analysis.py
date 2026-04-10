@@ -11,6 +11,7 @@ from analysis.pipeline import run_pipeline
 # Import analysis functions here as they are created
 # ---------------------------------------------------------------------------
 from analysis.erf import analyze_erf
+from analysis.loss_landscape_fn import analyze_loss_landscape
 # from analysis.cka_fn    import analyze_cka
 # from analysis.dis_occ_fn import analyze_dis_occ
 
@@ -26,8 +27,9 @@ OUTPUT_ROOT  = "analysis_output"
 # experiment name → analysis function
 # each key becomes a top-level folder under analysis_output/
 ANALYSIS_FNS = {
-    "erf":     analyze_erf,
-    # "dis_occ": analyze_dis_occ,
+    "erf":            analyze_erf,
+    # "loss_landscape": analyze_loss_landscape,
+    # "dis_occ":        analyze_dis_occ,
 }
 
 # Extra keyword args forwarded to every analysis function
