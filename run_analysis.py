@@ -36,7 +36,7 @@ ANALYSIS_FNS = {
 ANALYSIS_KWARGS = {
     "num_images":      100,
     "anchor_mode":     "random",
-    "num_anchors":     8,
+    "num_anchors":     64,
     "distance_metric": "taxi",
 }
 
