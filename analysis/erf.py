@@ -61,7 +61,7 @@ def get_input_grad_per_anchors(model, samples, anchors):
 
     return anchor_to_maps
 
-def choose_anchor_points(h_out=8, w_out=8, mode="random", num_anchors=8):
+def choose_anchor_points(h_out=8, w_out=8, mode="random", num_anchors=8, custom_x_values=None, custom_y_values=None):
     if mode == "center":
         return [(h_out//2, w_out//2)]
 
@@ -70,6 +70,10 @@ def choose_anchor_points(h_out=8, w_out=8, mode="random", num_anchors=8):
         num_anchors = min(num_anchors, len(all_points))
         idx = np.random.choice(len(all_points), size=num_anchors, replace=False)
         return [all_points[i] for i in idx]
+    
+    if mode == "custom":
+        all_points = [(y,x) for y,x in zip(custom_y_values, custom_x_values)]
+        return all_points
 
 def compute_long_range_metric(erf_map, anchor, distance_metric="taxi", patch_size=4):
     global ck
@@ -114,6 +118,8 @@ def _get_args():
     pre_parser.add_argument("--anchor_mode", type=str, default="center")
     pre_parser.add_argument("--num_anchors", type=int, default=4)
     pre_parser.add_argument("--distance_metric", type=str, default="taxi")
+    pre_parser.add_argument("--custom_x_values", type=int, nargs="+", default=None)
+    pre_parser.add_argument("--custom_y_values", type=int, nargs="+", default=None)
     pre_args, remaining = pre_parser.parse_known_args()
 
     args = parse_args(remaining)
@@ -128,6 +134,8 @@ def _get_args():
     args.anchor_mode = pre_args.anchor_mode
     args.num_anchors = pre_args.num_anchors
     args.distance_metric = pre_args.distance_metric
+    args.custom_x_values = pre_args.custom_x_values
+    args.custom_y_values = pre_args.custom_y_values
     return args
 
 def make_erf(output_path=None):
@@ -156,7 +164,7 @@ def make_erf(output_path=None):
         test_out = model(first_samples)
     _, _, h_out, w_out = test_out.shape
 
-    anchors = choose_anchor_points(h_out, w_out, args.anchor_mode, args.num_anchors)
+    anchors = choose_anchor_points(h_out, w_out, args.anchor_mode, args.num_anchors, args.custom_x_values.items, args.custom_y_values.items)
     
     print(f"Selected anchors: {anchors}")
 
@@ -237,7 +245,55 @@ def save_individual_plots(save_dir, avg_maps):
         fig.savefig(plot_path, bbox_inches="tight", dpi=150)
         plt.close(fig)
 
+def save_weight_dis_per_anchor(save_dir, avg_maps, distance_metric="taxi", patch_size=4):
+    """
+    For each anchor, pool the ERF map to token space and plot the total weight
+    at each distance from the anchor token.
+    All anchors are overlaid on one plot for easy comparison.
+    """
+    fig, ax = plt.subplots(figsize=(7, 4))
+
+    for anchor, erf_map in avg_maps.items():
+        h, w = erf_map.shape
+        H, W = h // patch_size, w // patch_size
+        py, px = anchor
+
+        # Pool pixel-space ERF to token space (same as compute_long_range_metric)
+        token_weights = np.zeros((H, W))
+        for i in range(h):
+            for j in range(w):
+                token_weights[i // patch_size, j // patch_size] += erf_map[i, j]
+
+        total = token_weights.sum()
+        if total > 0:
+            token_weights /= total
+
+        yy, xx = np.indices((H, W), dtype=np.float64)
+        if distance_metric == "taxi":
+            dist = np.abs(yy - py) + np.abs(xx - px)
+        else:  # euclidean
+            dist = np.sqrt((yy - py) ** 2 + (xx - px) ** 2)
+
+        dist_flat = dist.flatten()
+        weight_flat = token_weights.flatten()
+
+        unique_dists = np.unique(dist_flat)
+        weight_per_dist = [weight_flat[dist_flat == d].sum() for d in unique_dists]
+
+        ax.plot(unique_dists, weight_per_dist, marker="o", label=f"anchor {anchor}")
+
+    ax.set_xlabel(f"Distance ({distance_metric})")
+    ax.set_ylabel("Total weight")
+    ax.set_title("Weight per distance from anchor")
+    ax.legend(fontsize=7)
+
+    plot_path = os.path.join(save_dir, "weight_per_distance.png")
+    fig.savefig(plot_path, bbox_inches="tight", dpi=150)
+    plt.close(fig)
+    print(f"Saved weight-per-distance plot to {plot_path}")
+
 
 if __name__ == '__main__':
     save_dir, avg_maps, metrics = make_erf()
     # save_individual_plots(save_dir, avg_maps)
+    save_weight_dis_per_anchor(save_dir, avg_maps)
