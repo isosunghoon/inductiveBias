@@ -10,7 +10,7 @@ from analysis.pipeline import run_pipeline
 # ---------------------------------------------------------------------------
 # Import analysis functions here as they are created
 # ---------------------------------------------------------------------------
-from analysis.erf_once import analyze_erf
+from analysis.erf import analyze_erf
 # from analysis.cka_fn    import analyze_cka
 # from analysis.dis_occ_fn import analyze_dis_occ
 
@@ -31,7 +31,12 @@ ANALYSIS_FNS = {
 }
 
 # Extra keyword args forwarded to every analysis function
-ANALYSIS_KWARGS = {}
+ANALYSIS_KWARGS = {
+    "num_images":      100,
+    "anchor_mode":     "random",
+    "num_anchors":     8,
+    "distance_metric": "taxi",
+}
 
 
 # ---------------------------------------------------------------------------
