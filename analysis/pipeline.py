@@ -202,9 +202,14 @@ def run_pipeline(
     print(f"[pipeline] n_models   : {n_models}")
     print()
 
+    _SEP = "[pipeline] " + "─" * 60
+
     if n_models == 1:
-        for model_name, model_dir_path in model_dirs:
-            print(f"[pipeline] ── model: {model_name}")
+        total = len(model_dirs)
+        for idx, (model_name, model_dir_path) in enumerate(model_dirs, 1):
+            print(_SEP)
+            print(f"[pipeline] model {idx}/{total}: {model_name}")
+            print(_SEP)
 
             args = _load_args(model_dir_path)
             model = build_model(args, ckpt_name=ckpt_name)
@@ -231,9 +236,12 @@ def run_pipeline(
         print(f"[pipeline] pairs      : {len(pairs)}")
         print()
 
-        for (name1, path1), (name2, path2) in pairs:
+        total = len(pairs)
+        for idx, ((name1, path1), (name2, path2)) in enumerate(pairs, 1):
             pair_name = f"{name1}_vs_{name2}"
-            print(f"[pipeline] ── pair: {pair_name}")
+            print(_SEP)
+            print(f"[pipeline] pair {idx}/{total}: {pair_name}")
+            print(_SEP)
 
             args1 = _load_args(path1)
             model1 = build_model(args1, ckpt_name=ckpt_name)
@@ -253,4 +261,5 @@ def run_pipeline(
 
             print()
 
+    print(_SEP)
     print(f"[pipeline] done. results in {output_root}/")
