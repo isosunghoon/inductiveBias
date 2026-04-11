@@ -24,6 +24,7 @@ from analysis.pipeline import run_pipeline
 from analysis.erf import analyze_erf
 from analysis.loss_hessian import analyze_loss_landscape
 from analysis.cka import analyze_cka
+from analysis.calc_param import analyze_params
 # from analysis.dis_occ_fn import analyze_dis_occ
 
 
@@ -42,6 +43,7 @@ OUTPUT_ROOT  = "analysis_output"
 ANALYSIS_FNS: dict = {
     "erf":            analyze_erf,
     "loss_landscape": analyze_loss_landscape,
+    "params":         analyze_params,
     # "dis_occ":      analyze_dis_occ,
 }
 
