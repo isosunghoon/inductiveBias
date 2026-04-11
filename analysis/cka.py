@@ -159,28 +159,21 @@ def _layer_labels(n):
     return ["patch_embed"] + [f"block_{i}" for i in range(n - 1)]
 
 
-def save_cka_results(cka_matrix, model1_name, model2_name):
-    out_dir = os.path.join(os.path.dirname(__file__), "cka_results")
-    os.makedirs(out_dir, exist_ok=True)
+def _cka_txt(mat, model1_name, model2_name) -> str:
+    """Build the CKA matrix as a tab-separated string."""
+    lines = [
+        f"CKA matrix  ({model1_name} vs {model2_name})",
+        f"shape: {mat.shape[0]} x {mat.shape[1]}  (rows=model1 layers, cols=model2 layers)\n",
+        "\t" + "\t".join(_layer_labels(mat.shape[1])),
+    ]
+    for i, row_label in enumerate(_layer_labels(mat.shape[0])):
+        vals = "\t".join(f"{v:.4f}" for v in mat[i])
+        lines.append(f"{row_label}\t{vals}")
+    return "\n".join(lines) + "\n"
 
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    stem = f"{model1_name}_vs_{model2_name}_{timestamp}"
 
-    # --- .txt ---
-    txt_path = os.path.join(out_dir, f"{stem}.txt")
-    mat = cka_matrix.numpy()
-    with open(txt_path, "w") as f:
-        f.write(f"CKA matrix  ({model1_name} vs {model2_name})\n")
-        f.write(f"shape: {mat.shape[0]} x {mat.shape[1]}  "
-                f"(rows=model1 layers, cols=model2 layers)\n\n")
-        header = "\t".join(_layer_labels(mat.shape[1]))
-        f.write(f"\t{header}\n")
-        for i, row_label in enumerate(_layer_labels(mat.shape[0])):
-            vals = "\t".join(f"{v:.4f}" for v in mat[i])
-            f.write(f"{row_label}\t{vals}\n")
-    print(f"[CKA] txt  saved → {txt_path}")
-
-    # --- heatmap ---
+def _cka_figure(mat, model1_name, model2_name):
+    """Build and return a CKA heatmap Figure."""
     n_rows, n_cols = mat.shape
     fig_w = max(6, n_cols * 0.7)
     fig_h = max(5, n_rows * 0.7)
@@ -200,17 +193,75 @@ def save_cka_results(cka_matrix, model1_name, model2_name):
     ax.set_ylabel(f"Model 1: {model1_name}", fontsize=10)
     ax.set_title(f"Linear CKA  ({model1_name} vs {model2_name})", fontsize=11)
 
-    # annotate cells
     for i in range(n_rows):
         for j in range(n_cols):
             ax.text(j, i, f"{mat[i, j]:.2f}", ha="center", va="center",
                     fontsize=6, color="white" if mat[i, j] < 0.6 else "black")
 
     plt.tight_layout()
+    return fig
+
+
+def save_cka_results(cka_matrix, model1_name, model2_name):
+    out_dir = os.path.join(os.path.dirname(__file__), "cka_results")
+    os.makedirs(out_dir, exist_ok=True)
+
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    stem = f"{model1_name}_vs_{model2_name}_{timestamp}"
+    mat = cka_matrix.numpy()
+
+    txt_path = os.path.join(out_dir, f"{stem}.txt")
+    with open(txt_path, "w") as f:
+        f.write(_cka_txt(mat, model1_name, model2_name))
+    print(f"[CKA] txt  saved → {txt_path}")
+
+    fig = _cka_figure(mat, model1_name, model2_name)
     png_path = os.path.join(out_dir, f"{stem}.png")
     fig.savefig(png_path, dpi=150)
     plt.close(fig)
     print(f"[CKA] plot saved → {png_path}")
+
+
+def analyze_cka(args1, model1, args2, model2, max_samples: int = 1024, **kwargs) -> list:
+    """Pipeline-compatible CKA analysis for a pair of models.
+
+    Signature matches the n_models=2 convention in run_pipeline:
+        fn(args1, model1, args2, model2, **kwargs) -> list[AnalysisResult]
+
+    Layers are derived automatically from each model:
+        [patch_embed] + list(blocks)
+
+    Parameters
+    ----------
+    args1, args2  : parsed configs (from pipeline._load_args)
+    model1, model2: loaded models (from pipeline.build_model)
+    max_samples   : max number of test samples used for CKA (default 1024)
+
+    Returns
+    -------
+    list[AnalysisResult]
+        - suffix="cka", fmt=".txt"  – tab-separated CKA matrix
+        - suffix="cka", fmt=".png"  – heatmap figure
+    """
+    from analysis.pipeline import AnalysisResult
+
+    layers1 = [model1.patch_embed] + list(model1.blocks)
+    layers2 = [model2.patch_embed] + list(model2.blocks)
+
+    model1_name = getattr(args1, "model", "model1")
+    model2_name = getattr(args2, "model", "model2")
+
+    print(f"[CKA] {model1_name} vs {model2_name}", flush=True)
+
+    _, test_loader, _ = get_dataloader(args1)
+    cka_matrix = compare_cka(args1, model1, layers1, model2, layers2, test_loader,
+                              max_samples=max_samples)
+
+    mat = cka_matrix.cpu().numpy()
+    return [
+        AnalysisResult("cka", _cka_txt(mat, model1_name, model2_name), ".txt"),
+        AnalysisResult("cka", _cka_figure(mat, model1_name, model2_name),  ".png"),
+    ]
 
 
 def main():

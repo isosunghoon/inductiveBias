@@ -39,6 +39,7 @@ AnalysisResult
 
 from __future__ import annotations
 
+import itertools
 import os
 import pickle
 import numpy as np
@@ -121,6 +122,16 @@ def _iter_model_dirs(project_path: str):
         yield name, full
 
 
+def _iter_model_pairs(project_path: str):
+    """
+    Yield ((name1, path1), (name2, path2)) for every combination of two model
+    directories under project_path (each must have config.yaml).
+    """
+    dirs = list(_iter_model_dirs(project_path))
+    for (name1, path1), (name2, path2) in itertools.combinations(dirs, 2):
+        yield (name1, path1), (name2, path2)
+
+
 def _load_args(model_dir_path: str) -> Any:
     """Parse args from the saved config.yaml inside a model directory."""
     config_yaml = os.path.join(model_dir_path, "config.yaml")
@@ -139,10 +150,11 @@ def run_pipeline(
     analysis_fns: dict[str, Callable],
     ckpt_name: str = "best.pt",
     output_root: str = "analysis_output",
+    n_models: int = 1,
     **kwargs,
 ) -> None:
     """
-    Run all analysis_fns on every model under project_path.
+    Run all analysis_fns on every model (or model pair) under project_path.
 
     Parameters
     ----------
@@ -152,23 +164,34 @@ def run_pipeline(
     analysis_fns : dict[str, Callable]
         Mapping of experiment_name -> analysis function.
         Each key becomes the top-level folder under analysis_output/.
-        Each function must follow the signature::
+
+        When n_models=1, each function must follow::
 
             def analyze_X(args, model, **kwargs) -> list[AnalysisResult]
 
+        When n_models=2, each function must follow::
+
+            def analyze_X(args1, model1, args2, model2, **kwargs) -> list[AnalysisResult]
+
         Example::
 
-            {"erf": analyze_erf, "dis_occ": analyze_dis_occ}
+            {"erf": analyze_erf, "cka": analyze_cka}
 
     ckpt_name : str
         Checkpoint filename to load from each model directory (default "best.pt").
     output_root : str
         Root directory for all analysis outputs (default "analysis_output").
+    n_models : int
+        Number of models each analysis function receives (1 or 2, default 1).
+        When 2, the pipeline iterates over all pairs of model directories and
+        saves results under "{model1_name}_vs_{model2_name}".
     **kwargs
         Forwarded verbatim to every analysis function.
     """
-    project_name = os.path.basename(os.path.normpath(project_path))
+    if n_models not in (1, 2):
+        raise ValueError(f"n_models must be 1 or 2, got {n_models}")
 
+    project_name = os.path.basename(os.path.normpath(project_path))
     model_dirs = list(_iter_model_dirs(project_path))
     if not model_dirs:
         raise RuntimeError(f"No model directories with config.yaml found in: {project_path}")
@@ -176,25 +199,58 @@ def run_pipeline(
     print(f"[pipeline] project    : {project_name}  ({len(model_dirs)} models)")
     print(f"[pipeline] checkpoint : {ckpt_name}")
     print(f"[pipeline] analyses   : {list(analysis_fns.keys())}")
+    print(f"[pipeline] n_models   : {n_models}")
     print()
 
-    for model_name, model_dir_path in model_dirs:
-        print(f"[pipeline] ── model: {model_name}")
+    if n_models == 1:
+        for model_name, model_dir_path in model_dirs:
+            print(f"[pipeline] ── model: {model_name}")
 
-        args = _load_args(model_dir_path)
-        model = build_model(args, ckpt_name=ckpt_name)
+            args = _load_args(model_dir_path)
+            model = build_model(args, ckpt_name=ckpt_name)
 
-        for experiment_name, fn in analysis_fns.items():
-            save_dir = os.path.join(output_root, experiment_name, project_name)
-            os.makedirs(save_dir, exist_ok=True)
+            for experiment_name, fn in analysis_fns.items():
+                save_dir = os.path.join(output_root, experiment_name, project_name)
+                os.makedirs(save_dir, exist_ok=True)
 
-            print(f"[pipeline]    [{experiment_name}] running {fn.__name__} ...", flush=True)
-            results = fn(args, model, **kwargs)
+                print(f"[pipeline]    [{experiment_name}] running {fn.__name__} ...", flush=True)
+                results = fn(args, model, **kwargs)
 
-            for result in results:
-                saved_path = _save_result(result, save_dir, model_name)
-                print(f"[pipeline]    [{experiment_name}] saved  → {saved_path}")
+                for result in results:
+                    saved_path = _save_result(result, save_dir, model_name)
+                    print(f"[pipeline]    [{experiment_name}] saved  → {saved_path}")
 
+            print()
+
+    else:  # n_models == 2
+        pairs = list(_iter_model_pairs(project_path))
+        if not pairs:
+            raise RuntimeError(
+                f"Need at least 2 model directories for n_models=2, found: {len(model_dirs)}"
+            )
+        print(f"[pipeline] pairs      : {len(pairs)}")
         print()
+
+        for (name1, path1), (name2, path2) in pairs:
+            pair_name = f"{name1}_vs_{name2}"
+            print(f"[pipeline] ── pair: {pair_name}")
+
+            args1 = _load_args(path1)
+            model1 = build_model(args1, ckpt_name=ckpt_name)
+            args2 = _load_args(path2)
+            model2 = build_model(args2, ckpt_name=ckpt_name)
+
+            for experiment_name, fn in analysis_fns.items():
+                save_dir = os.path.join(output_root, experiment_name, project_name)
+                os.makedirs(save_dir, exist_ok=True)
+
+                print(f"[pipeline]    [{experiment_name}] running {fn.__name__} ...", flush=True)
+                results = fn(args1, model1, args2, model2, **kwargs)
+
+                for result in results:
+                    saved_path = _save_result(result, save_dir, pair_name)
+                    print(f"[pipeline]    [{experiment_name}] saved  → {saved_path}")
+
+            print()
 
     print(f"[pipeline] done. results in {output_root}/")
