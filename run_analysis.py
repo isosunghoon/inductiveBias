@@ -42,23 +42,23 @@ OUTPUT_ROOT  = "analysis_output"
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS: dict = {
     "erf":            analyze_erf,
-    "loss_landscape": analyze_loss_landscape,
-    "params":         analyze_params,
+    # "loss_landscape": analyze_loss_landscape,
+    # "params":         analyze_params,
     # "dis_occ":      analyze_dis_occ,
 }
 
 ANALYSIS_KWARGS = {
     # erf
     "num_images":      300,
-    "anchor_mode":     "random",
-    "num_anchors":     64,
+    "anchor_mode":     "custom",
+    "num_anchors":     3,
     "distance_metric": "taxi",
-    "average":         True,
+    "average":         False,
     "custom_x_values": [0, 6, 4],
     "custom_y_values": [0, 3, 4],
     # loss_landscape
     "batch_size":      16,
-    "ratio":           0.05,
+    "ratio":           1,
     "top_n":           5,
 }
 
@@ -67,7 +67,7 @@ ANALYSIS_KWARGS = {
 # fn signature: (args1, model1, args2, model2, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS_PAIR: dict = {
-    "cka": analyze_cka,
+    # "cka": analyze_cka,
 }
 
 ANALYSIS_KWARGS_PAIR = {

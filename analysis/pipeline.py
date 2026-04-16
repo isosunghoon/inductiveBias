@@ -124,11 +124,12 @@ def _iter_model_dirs(project_path: str):
 
 def _iter_model_pairs(project_path: str):
     """
-    Yield ((name1, path1), (name2, path2)) for every combination of two model
-    directories under project_path (each must have config.yaml).
+    Yield ((name1, path1), (name2, path2)) for every unordered pair of model
+    directories under project_path (each must have config.yaml), including
+    self-pairs (same model twice): (a,a), (a,b), (a,c), (b,b), (b,c), (c,c), ...
     """
     dirs = list(_iter_model_dirs(project_path))
-    for (name1, path1), (name2, path2) in itertools.combinations(dirs, 2):
+    for (name1, path1), (name2, path2) in itertools.combinations_with_replacement(dirs, 2):
         yield (name1, path1), (name2, path2)
 
 
@@ -183,8 +184,8 @@ def run_pipeline(
         Root directory for all analysis outputs (default "analysis_output").
     n_models : int
         Number of models each analysis function receives (1 or 2, default 1).
-        When 2, the pipeline iterates over all pairs of model directories and
-        saves results under "{model1_name}_vs_{model2_name}".
+        When 2, the pipeline iterates over all unordered model pairs including
+        self-pairs (same run twice) and saves under "{model1_name}_vs_{model2_name}".
     **kwargs
         Forwarded verbatim to every analysis function.
     """

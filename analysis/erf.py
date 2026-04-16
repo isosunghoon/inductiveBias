@@ -38,13 +38,10 @@ def erf_forward(self, x):
     # 공간 정보(H, W)가 살아있는 텐서를 그대로 반환합니다.
     return x
 
-ck = 0 # debugging
-
 def get_input_grad_per_anchors(model, samples, anchors):
     """
     Given model, samples, anchors -> return dictionary of {anchor: grad map}
     """
-    global ck
     outputs = model(samples)
     out_size = outputs.size()           # outputs.shape = ([1, 192, 8, 8]) for Cifar-100
     _, _, h_out, w_out = outputs.shape
@@ -77,37 +74,35 @@ def choose_anchor_points(h_out=8, w_out=8, mode="random", num_anchors=8, custom_
     if mode == "custom":
         return [(y,x) for y,x in zip(custom_y_values, custom_x_values)]
 
+def _erf_to_patch_map(erf_map, patch_size):
+    """Sum pixel-level erf_map into patches and normalize so all patch weights sum to 1."""
+    h, w = erf_map.shape
+    H, W = h // patch_size, w // patch_size
+    patch_map = np.zeros((H, W), dtype=np.float64)
+    for i in range(h):
+        for j in range(w):
+            patch_map[i // patch_size, j // patch_size] += erf_map[i, j]
+    total = patch_map.sum()
+    if total > 0:
+        patch_map /= total
+    return patch_map
+
 def compute_long_range_metric(erf_map, anchor, distance_metric="taxi", patch_size=4):
-    global ck
     """
     Given erf_map and distance metric type,
     return the average distance from each point
     """
-    h, w = erf_map.shape
     py, px = anchor
-    H, W = h//patch_size, w//patch_size
-    
-    token_weights = np.zeros((h//patch_size, w//patch_size))
-    
-    for i in range(h):
-        for j in range(w):
-            token_weights[i//patch_size, j//patch_size] += erf_map[i,j]
+    token_weights = _erf_to_patch_map(erf_map, patch_size)
+    H, W = token_weights.shape
 
-    total = token_weights.sum()
-    token_weights = token_weights / total
-
-    yy, xx = np.indices((H,W), dtype=np.float64)
-
+    yy, xx = np.indices((H, W), dtype=np.float64)
     if distance_metric == "taxi":
-        dist = np.abs(yy-py) + np.abs(xx-px)
+        dist = np.abs(yy - py) + np.abs(xx - px)
     if distance_metric == "euclidean":
-        dist = np.sqrt((yy-py)**2 + (xx-px)**2)
+        dist = np.sqrt((yy - py)**2 + (xx - px)**2)
 
-    if ck==0:
-        print(f"H: {H}, W: {W}, py:{py}, px:{px}")
-        ck+=1
-
-    return float((token_weights*dist).sum())
+    return float((token_weights * dist).sum())
 
 def _get_args():
     pre_parser = argparse.ArgumentParser(add_help=False)
@@ -139,25 +134,13 @@ def _get_args():
     args.custom_y_values = pre_args.custom_y_values
     return args
 
-def normalize_map(erf):
-    erf = erf.astype(np.float64)
-    erf = erf - erf.min()
-    denom = erf.max() + 1e-8
-    return erf / denom
-
 def _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size):
-    """Return (unique_dists, weight_per_dist) arrays for a single anchor."""
-    h, w = erf_map.shape
-    H, W = h // patch_size, w // patch_size
+    """Return (unique_dists, weight_per_dist) arrays for a single anchor.
+    weight_per_dist is the sum of patch weights at each distance, so it sums to 1.
+    """
     py, px = anchor
-
-    token_weights = np.zeros((H, W))
-    for i in range(h):
-        for j in range(w):
-            token_weights[i // patch_size, j // patch_size] += erf_map[i, j]
-    total = token_weights.sum()
-    if total > 0:
-        token_weights /= total
+    token_weights = _erf_to_patch_map(erf_map, patch_size)
+    H, W = token_weights.shape
 
     yy, xx = np.indices((H, W), dtype=np.float64)
     if distance_metric == "taxi":
@@ -170,7 +153,7 @@ def _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size):
     weight_per_dist = np.array([weight_flat[dist_flat == d].mean() for d in unique_dists])
     return unique_dists, weight_per_dist
 
-def _make_weight_per_dis_fig(avg_maps, average=True, distance_metric="taxi", patch_size=4):
+def _make_weight_per_dis_fig(avg_maps, token_mixer_name:str="", average=True, distance_metric="taxi", patch_size=4):
     """
     Build and return the weight-per-distance figure (does not save).
     average=True  -> average weight-per-distance across all anchors, one line.
@@ -189,46 +172,42 @@ def _make_weight_per_dis_fig(avg_maps, average=True, distance_metric="taxi", pat
         all_dists = np.array(sorted(dist_to_weights.keys()))
         avg_weights = np.array([np.mean(dist_to_weights[d]) for d in all_dists])
         ax.plot(all_dists, avg_weights, marker="o")
-        ax.set_title("Weight per distance (averaged over anchors)")
+        ax.set_title(f"{token_mixer_name} | Average Weight per Distance")
     else:
         for anchor, erf_map in avg_maps.items():
             unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
             ax.plot(unique_dists, weight_per_dist, marker="o", label=f"anchor {anchor}")
         ax.legend(fontsize=7)
-        ax.set_title("Weight per distance from anchor")
+        ax.set_title(f"{token_mixer_name} | Weight per Distance From Anchor")
 
     ax.set_xlabel(f"Distance ({distance_metric})")
     ax.set_ylabel("Total weight")
     return fig
 
-def make_individual_plots(avg_maps, patch_size=4):
+def make_individual_plots(avg_maps, token_mixer_name: str, patch_size=4):
     """
     Build one ERF heatmap figure per anchor at token resolution and return a list of AnalysisResult objects.
-    Each token value is the average of the pixels that fall within that patch.
+    Each patch value is the sum of pixels within that patch, normalized so all patches sum to 1.
     Intended for use when anchor_mode == "custom".
     """
     from analysis.pipeline import AnalysisResult
 
     results = []
     for anchor, erf in avg_maps.items():
-        h, w = erf.shape
-        H, W = h // patch_size, w // patch_size
-
-        token_map = np.zeros((H, W), dtype=np.float64)
-        for i in range(h):
-            for j in range(w):
-                token_map[i // patch_size, j // patch_size] += erf[i, j]
-        token_map /= (patch_size * patch_size)
-
-        token_vis = normalize_map(token_map)
+        token_map = _erf_to_patch_map(erf, patch_size)
 
         fig, ax = plt.subplots(figsize=(5, 5))
-        im = ax.imshow(token_vis, cmap="inferno", norm=mcolors.PowerNorm(gamma=0.4))
+        im = ax.imshow(
+            token_map,
+            cmap="inferno",
+            norm=mcolors.PowerNorm(gamma=0.5, vmin=0.0, vmax=0.06)
+        )     
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title(f"Anchor {anchor}")
+        ax.set_title(f"{token_mixer_name} | anchor: {anchor}")
         ax.axis("off")
 
         results.append(AnalysisResult(f"erf_anchor_{anchor[0]}_{anchor[1]}", fig, ".png"))
+        results.append(AnalysisResult(f"token_map_anchor_{anchor[0]}_{anchor[1]}", token_map, ".npy"))
     return results
 
 def analyze_erf(args, model, num_images=100, ratio=1.0,
@@ -296,13 +275,24 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
     results.append(
         AnalysisResult(f"erf_anchor_{a[0]}_{a[1]}", m, ".npy")
         for a, m in avg_maps.items()
-    )
-    '''
-    results.append(AnalysisResult(f"metrics_{overall_dis}", json.dumps(metrics, indent=2), ".txt"))
-    results.append(AnalysisResult("weight_per_distance"+("" if average else "_by_anchor"), _make_weight_per_dis_fig(avg_maps, average, distance_metric, patch_size), ".png")) 
+
+    ''' 
+    token_mixer_name = args.model
+    if token_mixer_name == "convformer":
+        token_mixer_name = "Convformer"
+    if token_mixer_name == "localvit":
+        token_mixer_name = "local ViT"
+    if token_mixer_name == "denseformer":
+        token_mixer_name = "MLPMixer"
+    if token_mixer_name == "vit":
+        token_mixer_name = "ViT"
+
+    results.append(AnalysisResult("weight_per_distance"+("" if average else "_by_anchor"), _make_weight_per_dis_fig(avg_maps, token_mixer_name, average, distance_metric, patch_size), ".png")) 
+    
+    if average:
+        results.append(AnalysisResult(f"metrics_{overall_dis}", json.dumps(metrics, indent=2), ".txt"))
     
     if anchor_mode == "custom":
-        results.extend(make_individual_plots(avg_maps, patch_size))
+        results.extend(make_individual_plots(avg_maps, token_mixer_name, patch_size))
 
-    
     return results
