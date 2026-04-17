@@ -49,11 +49,11 @@ ANALYSIS_FNS: dict = {
 
 ANALYSIS_KWARGS = {
     # erf
-    "num_images":      1000,
-    "anchor_mode":     "all",
-    "num_anchors":     64,
+    "num_images":      10000,
+    "anchor_mode":     "custom",
+    "num_anchors":     3,
     "distance_metric": "taxi",
-    "average":         True,
+    "average":         False,        # Calculate ERD through accumulating all patch values
     "custom_x_values": [0, 6, 4],
     "custom_y_values": [0, 3, 4],
     # loss_landscape
@@ -67,11 +67,11 @@ ANALYSIS_KWARGS = {
 # fn signature: (args1, model1, args2, model2, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS_PAIR: dict = {
-    # "cka": analyze_cka,
+    "cka": analyze_cka,
 }
 
 ANALYSIS_KWARGS_PAIR = {
-    "max_samples": 1024,
+    "max_samples": 4096,
 }
 
 

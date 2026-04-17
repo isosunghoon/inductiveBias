@@ -150,8 +150,20 @@ def _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size):
 
     dist_flat, weight_flat = dist.flatten(), token_weights.flatten()
     unique_dists = np.unique(dist_flat)
-    weight_per_dist = np.array([weight_flat[dist_flat == d].mean() for d in unique_dists])
+    weight_per_dist = np.array([weight_flat[dist_flat == d].sum() for d in unique_dists])
     return unique_dists, weight_per_dist
+
+def _compute_sum_weight_per_dist(avg_maps, distance_metric, patch_size):
+    """Accumulate weight-per-distance across all anchors. Returns (all_dists, avg_weights)."""
+    dist_to_weights = {}
+    for anchor, erf_map in avg_maps.items():
+        unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
+        for d, w in zip(unique_dists, weight_per_dist):
+            dist_to_weights.setdefault(d, []).append(w)
+    all_dists = np.array(sorted(dist_to_weights.keys()))
+    sum_weights = np.array([np.sum(dist_to_weights[d]) for d in all_dists])
+    sum_weights = sum_weights / sum_weights.sum()
+    return all_dists, sum_weights
 
 def _compute_avg_weight_per_dist(avg_maps, distance_metric, patch_size):
     """Average weight-per-distance across all anchors. Returns (all_dists, avg_weights)."""
@@ -165,30 +177,51 @@ def _compute_avg_weight_per_dist(avg_maps, distance_metric, patch_size):
     return all_dists, avg_weights
 
 
-def _make_weight_per_dis_fig(avg_maps, token_mixer_name:str="", average=True, distance_metric="taxi", patch_size=4):
+def _compute_erf_dist_std(all_dists, avg_weights):
+    """
+    Compute std of the distance r.v. under the ERF distribution.
+    avg_weights is treated as a prob mass function over all_dists.
+    Returns (mean_dist, std_dist).
+    """
+    w = avg_weights / avg_weights.sum() if avg_weights.sum() > 0 else avg_weights
+    mean_d = (all_dists * w).sum()
+    std_d = np.sqrt(np.maximum((all_dists ** 2 * w).sum() - mean_d ** 2, 0.0))
+    return mean_d, std_d
+
+
+def _make_weight_per_dis_fig(avg_maps, token_mixer_name:str="", average=True, distance_metric="taxi", patch_size=4, se_d=None):
     """
     Build and return the weight-per-distance figure (does not save).
     average=True  -> average weight-per-distance across all anchors, one line.
     average=False -> one line per anchor.
+    se_d: standard error of the mean distance metric across images (σ_images / √n).
+          If provided, the shaded band shows mean_d ± se_d. Falls back to intrinsic ERF std if None.
     """
     fig, ax = plt.subplots(figsize=(7, 4))
 
     if average:
-        all_dists, avg_weights = _compute_avg_weight_per_dist(avg_maps, distance_metric, patch_size)
-        ax.plot(all_dists, avg_weights, marker="o")
-        ax.set_title(f"{token_mixer_name} | Average Weight per Distance")
+        all_dists, avg_weights = _compute_sum_weight_per_dist(avg_maps, distance_metric, patch_size)
+        mean_d, intrinsic_std = _compute_erf_dist_std(all_dists, avg_weights)
+        band = se_d if se_d is not None else intrinsic_std
+        label = f"μ={mean_d:.2f}, SE={band:.4f}" if se_d is not None else f"μ={mean_d:.2f}, σ={band:.2f}"
+        line, = ax.plot(all_dists, avg_weights, marker="o")
+        ax.axvline(mean_d, color=line.get_color(), linestyle="--", alpha=0.7, label=label)
+        ax.axvspan(mean_d - band, mean_d + band, alpha=0.12, color=line.get_color())
+        ax.legend(fontsize=10)
+        # ax.set_title(f"{token_mixer_name} | Average Weight per Distance")
     else:
         for anchor, erf_map in avg_maps.items():
             unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
             ax.plot(unique_dists, weight_per_dist, marker="o", label=f"anchor {anchor}")
-        ax.legend(fontsize=7)
-        ax.set_title(f"{token_mixer_name} | Weight per Distance From Anchor")
+        ax.legend(fontsize=10)
+        # ax.set_title(f"{token_mixer_name} | Weight per Distance From Anchor")
 
-    ax.set_xlabel(f"Distance ({distance_metric})")
-    ax.set_ylabel("Total weight")
+    ax.set_xlabel(f"Distance ({distance_metric})", fontsize=13)
+    ax.set_ylabel("Average weight", fontsize=13)
+    ax.tick_params(labelsize=11)
     return fig
 
-def make_individual_plots(avg_maps, token_mixer_name: str, patch_size=4):
+def make_erf_heatmap(avg_maps, token_mixer_name: str, patch_size=4):
     """
     Build one ERF heatmap figure per anchor at token resolution and return a list of AnalysisResult objects.
     Each patch value is the sum of pixels within that patch, normalized so all patches sum to 1.
@@ -204,11 +237,17 @@ def make_individual_plots(avg_maps, token_mixer_name: str, patch_size=4):
         im = ax.imshow(
             token_map,
             cmap="inferno",
-            norm=mcolors.PowerNorm(gamma=0.5, vmin=0.0, vmax=0.06)
+            norm=mcolors.PowerNorm(gamma=0.5, vmin=0.0, vmax=0.05)
         )     
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title(f"{token_mixer_name} | anchor: {anchor}")
-        ax.axis("off")
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.ax.tick_params(labelsize=14)
+
+        H, W = token_map.shape
+        ax.set_xticks(range(W))
+        ax.set_yticks(range(H))
+        ax.tick_params(labelsize=14)
+        ax.set_title(f"{token_mixer_name}", fontsize=20)
+        plt.tight_layout()
 
         results.append(AnalysisResult(f"erf_anchor_{anchor[0]}_{anchor[1]}", fig, ".png"))
         results.append(AnalysisResult(f"token_map_anchor_{anchor[0]}_{anchor[1]}", token_map, ".npy"))
@@ -247,6 +286,7 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
     print(f"Selected anchors: {anchors}")
 
     accum = {anchor: np.zeros((h_in, w_in), dtype=np.float64) for anchor in anchors}
+    per_image_dists = {anchor: [] for anchor in anchors}
     count = 0
     for samples, _ in tqdm(sample_loader, total=total, desc="Computing ERF"):
         if count >= num_images:
@@ -258,20 +298,29 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
             single_map = anchor_to_maps[anchor]
             if np.isnan(np.sum(single_map)):
                 print("got NAN, skip")
+                continue
             accum[anchor] += single_map
+            per_image_dists[anchor].append(
+                compute_long_range_metric(single_map, anchor, distance_metric, patch_size)
+            )
         count += samples.shape[0]
 
     avg_maps, metrics = {}, []
     for anchor in anchors:
         avg_map = accum[anchor] / count
         avg_maps[anchor] = avg_map
+        d_arr = np.array(per_image_dists[anchor])
+        mean_d = float(d_arr.mean())
+        se_d = float(d_arr.std() / np.sqrt(len(d_arr)))
         metrics.append({
             "y": anchor[0], "x": anchor[1],
-            "long_range_metric": compute_long_range_metric(avg_map, anchor, distance_metric, patch_size),
+            "long_range_metric": mean_d,
+            "se": se_d,
         })
 
-    overall_dis = sum(m["long_range_metric"] for m in metrics) / len(metrics)
-    print(f"overall long range metric: {overall_dis} tokens")
+    overall_dis = np.mean([m["long_range_metric"] for m in metrics])
+    overall_se = np.mean([m["se"] for m in metrics])
+    print(f"overall long range metric: {overall_dis:.4f} ± {overall_se:.4f} tokens (SE)")
 
     results = []
     '''
@@ -287,21 +336,21 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
     if token_mixer_name == "localvit":
         token_mixer_name = "local ViT"
     if token_mixer_name == "denseformer":
-        token_mixer_name = "MLPMixer"
+        token_mixer_name = "MLP mixer"
     if token_mixer_name == "vit":
         token_mixer_name = "ViT"
 
-    results.append(AnalysisResult("weight_per_distance"+("" if average else "_by_anchor"), _make_weight_per_dis_fig(avg_maps, token_mixer_name, average, distance_metric, patch_size), ".png")) 
+    results.append(AnalysisResult("weight_per_distance"+("" if average else "_by_anchor"), _make_weight_per_dis_fig(avg_maps, token_mixer_name, average, distance_metric, patch_size, se_d=overall_se), ".png"))
 
-    all_dists, avg_weights = _compute_avg_weight_per_dist(avg_maps, distance_metric, patch_size)
-    results.append(AnalysisResult("weight_per_distance_data", np.array([all_dists, avg_weights]), ".npy"))
+    all_dists, avg_weights = _compute_sum_weight_per_dist(avg_maps, distance_metric, patch_size)
+    results.append(AnalysisResult("weight_per_distance_data", np.array([all_dists, avg_weights, np.full_like(all_dists, overall_se)]), ".npy"))
     print(f"weight_per_distance_data saved")
 
     if average:
         results.append(AnalysisResult(f"metrics_{overall_dis}", json.dumps(metrics, indent=2), ".txt"))
     
     if anchor_mode == "custom":
-        results.extend(make_individual_plots(avg_maps, token_mixer_name, patch_size))
+        results.extend(make_erf_heatmap(avg_maps, token_mixer_name, patch_size))
 
     return results
 
@@ -322,22 +371,27 @@ def make_combined_weight_per_dist_plot(npy_files: dict, distance_metric="taxi"):
     for model_name, path in npy_files.items():
         data = np.load(path)
         all_dists, avg_weights = data[0], data[1]
-        ax.plot(all_dists, avg_weights, marker="o", label=model_name)
-    ax.set_title("Avereaged Weight per Distance")
-    ax.set_xlabel(f"Distance ({distance_metric})")
-    ax.set_ylabel("Total weight")
-    # ax.set_ylim(bottom=0)
-    ax.legend()
+        mean_d, intrinsic_std = _compute_erf_dist_std(all_dists, avg_weights)
+        se_d = float(data[2][0]) if data.shape[0] >= 3 else intrinsic_std
+        label = f"{model_name} (μ={mean_d:.2f}, SE={se_d:.3f})" if data.shape[0] >= 3 else f"{model_name} (μ={mean_d:.2f}, σ={intrinsic_std:.2f})"
+        line, = ax.plot(all_dists, avg_weights, marker="o", label=label)
+        ax.axvline(mean_d, color=line.get_color(), linestyle="--", alpha=0.7)
+        ax.axvspan(mean_d - se_d, mean_d + se_d, alpha=0.1, color=line.get_color())
+    ax.set_title("Total Weight per Distance and ERD by Token Mixer", fontsize=14)
+    ax.set_xlabel(f"Distance ({distance_metric})", fontsize=13)
+    ax.set_ylabel("Total weight (Normalized)", fontsize=13)
+    ax.tick_params(labelsize=11)
+    ax.legend(fontsize=10)
     plt.tight_layout()
     return fig
 
 
 if __name__ == "__main__":
     token_mixers = {
-        "Convformer":"convformer",
-        "MLPMixer": "denseformer",
+        "ViT": "vit",
         "local ViT": "localvit", 
-        "ViT": "vit"
+        "MLP mixer": "denseformer",
+        "Convformer":"convformer",
         }
     NPY_FILES = {
         k: f"analysis_output/erf/final1/{w}_weight_per_distance_data.npy" for k,w in token_mixers.items()

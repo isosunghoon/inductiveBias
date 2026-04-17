@@ -61,7 +61,7 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader, max_samp
     for i, layer in enumerate(layers_2):
         hooks.append(layer.register_forward_hook(catcher_2.hook(f"feat{i}")))
 
-    max_batches = max_samples // dataloader.batch_size
+    max_batches = max(1, max_samples // dataloader.batch_size)
     total_batches = min(max_batches, len(dataloader))
 
     # Per-layer feature storage
@@ -109,6 +109,17 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader, max_samp
     return cka_matrix
 
 
+_MODEL_DISPLAY_NAMES = {
+    "convformer": "Convformer",
+    "localvit":   "local ViT",
+    "denseformer": "MLP mixer",
+    "vit":        "ViT",
+}
+
+def _display_name(model_name: str) -> str:
+    return _MODEL_DISPLAY_NAMES.get(model_name, model_name)
+
+
 def _layer_labels(n):
     """Generate tick labels: ['patch_embed', 'block_0', 'block_1', ...]"""
     return ["patch_embed"] + [f"block_{i}" for i in range(n - 1)]
@@ -135,18 +146,22 @@ def _cka_figure(mat, model1_name, model2_name):
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
     im = ax.imshow(mat, vmin=0.0, vmax=1.0, cmap="magma", aspect="auto")
-    plt.colorbar(im, ax=ax, label="CKA similarity")
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("CKA similarity", fontsize=11)
+    cbar.ax.tick_params(labelsize=10)
 
     col_labels = _layer_labels(n_cols)
     row_labels = _layer_labels(n_rows)
     ax.set_xticks(range(n_cols))
-    ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=12)
     ax.set_yticks(range(n_rows))
-    ax.set_yticklabels(row_labels, fontsize=8)
+    ax.set_yticklabels(row_labels, fontsize=12)
 
-    ax.set_xlabel(f"Model 2: {model2_name}", fontsize=10)
-    ax.set_ylabel(f"Model 1: {model1_name}", fontsize=10)
-    ax.set_title(f"Linear CKA  ({model1_name} vs {model2_name})", fontsize=11)
+    ax.set_xlabel(f"{model2_name}", fontsize=28)
+    ax.set_ylabel(f" {model1_name}", fontsize=28)
+    ax.set_title(f"({model1_name} vs {model2_name})", fontsize=25)
+
+    cell_fontsize = max(5, min(8, int(fig_w * 72 / n_cols / 5)))
 
     for i in range(n_rows):
         for j in range(n_cols):
@@ -183,8 +198,8 @@ def analyze_cka(args1, model1, args2, model2, max_samples: int = 1024, **kwargs)
     layers1 = [model1.patch_embed] + list(model1.blocks)
     layers2 = [model2.patch_embed] + list(model2.blocks)
 
-    model1_name = getattr(args1, "model", "model1")
-    model2_name = getattr(args2, "model", "model2")
+    model1_name = _display_name(getattr(args1, "model", "model1"))
+    model2_name = _display_name(getattr(args2, "model", "model2"))
 
     print(f"[CKA] {model1_name} vs {model2_name}", flush=True)
 
