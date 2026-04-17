@@ -153,6 +153,18 @@ def _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size):
     weight_per_dist = np.array([weight_flat[dist_flat == d].mean() for d in unique_dists])
     return unique_dists, weight_per_dist
 
+def _compute_avg_weight_per_dist(avg_maps, distance_metric, patch_size):
+    """Average weight-per-distance across all anchors. Returns (all_dists, avg_weights)."""
+    dist_to_weights = {}
+    for anchor, erf_map in avg_maps.items():
+        unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
+        for d, w in zip(unique_dists, weight_per_dist):
+            dist_to_weights.setdefault(d, []).append(w)
+    all_dists = np.array(sorted(dist_to_weights.keys()))
+    avg_weights = np.array([np.mean(dist_to_weights[d]) for d in all_dists])
+    return all_dists, avg_weights
+
+
 def _make_weight_per_dis_fig(avg_maps, token_mixer_name:str="", average=True, distance_metric="taxi", patch_size=4):
     """
     Build and return the weight-per-distance figure (does not save).
@@ -162,15 +174,7 @@ def _make_weight_per_dis_fig(avg_maps, token_mixer_name:str="", average=True, di
     fig, ax = plt.subplots(figsize=(7, 4))
 
     if average:
-        # Collect weight arrays per unique distance, then average across anchors
-        dist_to_weights = {}
-        for anchor, erf_map in avg_maps.items():
-            unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
-            for d, w in zip(unique_dists, weight_per_dist):
-                dist_to_weights.setdefault(d, []).append(w)
-
-        all_dists = np.array(sorted(dist_to_weights.keys()))
-        avg_weights = np.array([np.mean(dist_to_weights[d]) for d in all_dists])
+        all_dists, avg_weights = _compute_avg_weight_per_dist(avg_maps, distance_metric, patch_size)
         ax.plot(all_dists, avg_weights, marker="o")
         ax.set_title(f"{token_mixer_name} | Average Weight per Distance")
     else:
@@ -288,7 +292,11 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
         token_mixer_name = "ViT"
 
     results.append(AnalysisResult("weight_per_distance"+("" if average else "_by_anchor"), _make_weight_per_dis_fig(avg_maps, token_mixer_name, average, distance_metric, patch_size), ".png")) 
-    
+
+    all_dists, avg_weights = _compute_avg_weight_per_dist(avg_maps, distance_metric, patch_size)
+    results.append(AnalysisResult("weight_per_distance_data", np.array([all_dists, avg_weights]), ".npy"))
+    print(f"weight_per_distance_data saved")
+
     if average:
         results.append(AnalysisResult(f"metrics_{overall_dis}", json.dumps(metrics, indent=2), ".txt"))
     
@@ -296,3 +304,49 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
         results.extend(make_individual_plots(avg_maps, token_mixer_name, patch_size))
 
     return results
+
+def make_combined_weight_per_dist_plot(npy_files: dict, distance_metric="taxi"):
+    """
+    Load weight-per-distance .npy files for multiple models and overlay them on one plot.
+    Each .npy must have shape (2, n): row 0 = distances, row 1 = avg weights.
+    Matches the format of _make_weight_per_dis_fig (average=True).
+
+    Parameters
+    ----------
+    npy_files : dict[str, str]
+        Mapping of display name -> path to weight_per_distance_data.npy
+    distance_metric : str
+        Label used for the x-axis (e.g. "taxi", "euclidean")
+    """
+    fig, ax = plt.subplots(figsize=(7, 4))
+    for model_name, path in npy_files.items():
+        data = np.load(path)
+        all_dists, avg_weights = data[0], data[1]
+        ax.plot(all_dists, avg_weights, marker="o", label=model_name)
+    ax.set_title("Avereaged Weight per Distance")
+    ax.set_xlabel(f"Distance ({distance_metric})")
+    ax.set_ylabel("Total weight")
+    # ax.set_ylim(bottom=0)
+    ax.legend()
+    plt.tight_layout()
+    return fig
+
+
+if __name__ == "__main__":
+    token_mixers = {
+        "Convformer":"convformer",
+        "MLPMixer": "denseformer",
+        "local ViT": "localvit", 
+        "ViT": "vit"
+        }
+    NPY_FILES = {
+        k: f"analysis_output/erf/final1/{w}_weight_per_distance_data.npy" for k,w in token_mixers.items()
+    }
+    DISTANCE_METRIC = "taxi"
+    SAVE_PATH = "analysis_output/erf/final1/combined_weight_per_distance.png"
+
+    fig = make_combined_weight_per_dist_plot(NPY_FILES, distance_metric=DISTANCE_METRIC)
+    os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
+    fig.savefig(SAVE_PATH, bbox_inches="tight", dpi=220)
+    plt.close(fig)
+    print(f"Saved combined plot to {SAVE_PATH}")

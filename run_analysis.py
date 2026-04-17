@@ -49,11 +49,11 @@ ANALYSIS_FNS: dict = {
 
 ANALYSIS_KWARGS = {
     # erf
-    "num_images":      300,
-    "anchor_mode":     "custom",
-    "num_anchors":     3,
+    "num_images":      1000,
+    "anchor_mode":     "all",
+    "num_anchors":     64,
     "distance_metric": "taxi",
-    "average":         False,
+    "average":         True,
     "custom_x_values": [0, 6, 4],
     "custom_y_values": [0, 3, 4],
     # loss_landscape
