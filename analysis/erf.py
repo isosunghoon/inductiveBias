@@ -27,18 +27,14 @@ from utils.build_model import build_model
 # Module-level helpers
 # ============================================================================
 
-# 새로운 forward 함수 정의 (ERF 측정용: GAP 제거 버전)
 def erf_forward(self, x):
     """
-    ERF 측정을 위해 GAP와 Head를 제거하고
-    최종 피처 맵(B, C, H, W)을 반환하는 함수
+    Remove Gap and return x with spatial information (H, W)
     """
     x = self.forward_embeddings(x)
     x = self.forward_tokens(x)
-
-    # 여기서 GAP(x.mean([-2, -1]))를 수행하지 않고
-    # 공간 정보(H, W)가 살아있는 텐서를 그대로 반환합니다.
     x = self.norm(x)
+
     return x
 
 
