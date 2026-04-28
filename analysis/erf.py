@@ -191,6 +191,22 @@ def _compute_erf_dist_std(all_dists, avg_weights):
     return mean_d, std_d
 
 
+def _compute_per_anchor_dist_stats(avg_maps, distance_metric, patch_size):
+    """For each anchor, compute (mean, std) of distance under that anchor's own ERF distribution.
+    ERD is then defined as the average of per-anchor means: each anchor patch has a different
+    geometric reach, so we treat ERF(Y_ij, ·) as a separate distribution per anchor and aggregate
+    only after taking the per-anchor expectation/std.
+    Returns (per_anchor_means, per_anchor_stds) of shape (n_anchors,).
+    """
+    means, stds = [], []
+    for anchor, erf_map in avg_maps.items():
+        unique_dists, weight_per_dist = _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size)
+        m, s = _compute_erf_dist_std(unique_dists, weight_per_dist)
+        means.append(m)
+        stds.append(s)
+    return np.array(means), np.array(stds)
+
+
 def _make_weight_per_dis_fig(avg_maps, token_mixer_name:str="", average=True, distance_metric="taxi", patch_size=4, se_d=None):
     """
     Build and return the weight-per-distance figure (does not save).
@@ -203,7 +219,9 @@ def _make_weight_per_dis_fig(avg_maps, token_mixer_name:str="", average=True, di
 
     if average:
         all_dists, avg_weights = _compute_sum_weight_per_dist(avg_maps, distance_metric, patch_size)
-        mean_d, intrinsic_std = _compute_erf_dist_std(all_dists, avg_weights)
+        per_anchor_means, per_anchor_stds = _compute_per_anchor_dist_stats(avg_maps, distance_metric, patch_size)
+        mean_d = float(per_anchor_means.mean())
+        intrinsic_std = float(per_anchor_stds.mean())
         band = se_d if se_d is not None else intrinsic_std
         label = f"μ={mean_d:.2f}, SE={band:.4f}" if se_d is not None else f"μ={mean_d:.2f}, σ={band:.2f}"
         line, = ax.plot(all_dists, avg_weights, marker="o")
@@ -320,9 +338,11 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
             "se": se_d,
         })
 
-    overall_dis = np.mean([m["long_range_metric"] for m in metrics])
+    per_anchor_means, per_anchor_stds = _compute_per_anchor_dist_stats(avg_maps, distance_metric, patch_size)
+    overall_dis = float(per_anchor_means.mean())
+    overall_intrinsic_std = float(per_anchor_stds.mean())
     overall_se = np.mean([m["se"] for m in metrics])
-    print(f"overall long range metric: {overall_dis:.4f} ± {overall_se:.4f} tokens (SE)")
+    print(f"overall long range metric: {overall_dis:.4f} ± {overall_se:.4f} tokens (SE), σ={overall_intrinsic_std:.4f}")
 
     results = []
     '''
@@ -345,7 +365,13 @@ def analyze_erf(args, model, num_images=100, ratio=1.0,
     results.append(AnalysisResult("weight_per_distance"+("" if average else "_by_anchor"), _make_weight_per_dis_fig(avg_maps, token_mixer_name, average, distance_metric, patch_size, se_d=overall_se), ".png"))
 
     all_dists, avg_weights = _compute_sum_weight_per_dist(avg_maps, distance_metric, patch_size)
-    results.append(AnalysisResult("weight_per_distance_data", np.array([all_dists, avg_weights, np.full_like(all_dists, overall_se)]), ".npy"))
+    results.append(AnalysisResult("weight_per_distance_data", np.array([
+        all_dists,
+        avg_weights,
+        np.full_like(all_dists, overall_se, dtype=np.float64),
+        np.full_like(all_dists, overall_dis, dtype=np.float64),
+        np.full_like(all_dists, overall_intrinsic_std, dtype=np.float64),
+    ]), ".npy"))
     print(f"weight_per_distance_data saved")
 
     if average:
@@ -373,12 +399,21 @@ def make_combined_weight_per_dist_plot(npy_files: dict, distance_metric="taxi"):
     for model_name, path in npy_files.items():
         data = np.load(path)
         all_dists, avg_weights = data[0], data[1]
-        mean_d, intrinsic_std = _compute_erf_dist_std(all_dists, avg_weights)
-        se_d = float(data[2][0]) if data.shape[0] >= 3 else intrinsic_std
-        label = f"{model_name} (μ={mean_d:.2f}, SE={se_d:.3f})" if data.shape[0] >= 3 else f"{model_name} (μ={mean_d:.2f}, σ={intrinsic_std:.2f})"
+        if data.shape[0] >= 5:
+            se_d = float(data[2][0])
+            mean_d = float(data[3][0])
+            intrinsic_std = float(data[4][0])
+        elif data.shape[0] >= 3:
+            se_d = float(data[2][0])
+            mean_d, intrinsic_std = _compute_erf_dist_std(all_dists, avg_weights)
+        else:
+            se_d = None
+            mean_d, intrinsic_std = _compute_erf_dist_std(all_dists, avg_weights)
+        label = f"{model_name} (μ={mean_d:.2f}, SE={se_d:.3f})" if se_d is not None else f"{model_name} (μ={mean_d:.2f}, σ={intrinsic_std:.2f})"
+        band = se_d if se_d is not None else intrinsic_std
         line, = ax.plot(all_dists, avg_weights, marker="o", label=label)
         ax.axvline(mean_d, color=line.get_color(), linestyle="--", alpha=0.7)
-        ax.axvspan(mean_d - se_d, mean_d + se_d, alpha=0.1, color=line.get_color())
+        ax.axvspan(mean_d - band, mean_d + band, alpha=0.1, color=line.get_color())
     ax.set_title("Total Weight per Distance and ERD by Token Mixer", fontsize=14)
     ax.set_xlabel(f"Distance ({distance_metric})", fontsize=13)
     ax.set_ylabel("Total weight (Normalized)", fontsize=13)
