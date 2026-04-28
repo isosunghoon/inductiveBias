@@ -2,6 +2,8 @@
 # 모델별 yaml (config/model_*.yaml) 이 이 값들을 덮어씁니다.
 
 # ===== Basic =====
+# GPU 인덱스 (0, 1, …). 반드시 명시 — 기본값 없음 (다른 스크립트와 GPU 충돌 방지).
+# device_type: 0
 seed: 67
 dataset: cifar100
 is_metaformer: true

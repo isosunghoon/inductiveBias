@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 from collections import defaultdict
 
-from utils.config import parse_args
+from utils.config import parse_args, resolve_runtime_device
 from utils.dataset import get_dataloader
 from train import setup, set_seed
 
@@ -168,7 +168,8 @@ def _get_args():
     args.max_d = pre_args.max_d
     args.anchor_stride = pre_args.anchor_stride
 
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    resolve_runtime_device(args)
+
     return args
 
 def main():

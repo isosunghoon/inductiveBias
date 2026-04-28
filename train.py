@@ -11,7 +11,7 @@ import models.norm_layers as NL
 import models.resnet as RN
 from models.sam import SAM
 
-from utils.config import parse_args
+from utils.config import parse_args, resolve_runtime_device
 from utils.dataset import get_dataloader
 
 from tqdm import tqdm
@@ -256,7 +256,7 @@ def build_wandb_config(args):
 
 def main():
     args = parse_args()
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    resolve_runtime_device(args)
     set_seed(args.seed)
     
     if args.run_name == 'XXXXX':
@@ -273,8 +273,8 @@ def main():
     # All checkpoints (best, warmup, periodic) will be saved under this directory
     args.output_path = run_dir
 
-    # Save the fully resolved training configuration (after YAML + CLI) as a single config.yaml
-    # Exclude non-serializable / runtime-only fields like device.
+    # Save the fully resolved training configuration (after YAML + CLI) as a single config.yaml.
+    # Save only device_type (runtime device string is reconstructed at execution time).
     config_path = os.path.join(run_dir, "config.yaml")
     config_to_save = {k: v for k, v in vars(args).items() if k != "device"}
     with open(config_path, "w", encoding="utf-8") as f:

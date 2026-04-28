@@ -38,7 +38,7 @@ def calc_loss_landscape(args, model, loader, mixup_fn):
             with torch.amp.autocast('cuda', enabled=args.fp16):
                 return torch.nn.functional.cross_entropy(logits, y, label_smoothing=args.label_smoothing)
 
-        hessian_comp = hessian(model, criterion, data=(x, y), cuda=(args.device == "cuda"))
+        hessian_comp = hessian(model, criterion, data=(x, y), cuda=args.device.startswith("cuda"))
         eigenvalues, _ = hessian_comp.eigenvalues(top_n=5)
         res.append(eigenvalues)
         model.zero_grad(set_to_none=True)

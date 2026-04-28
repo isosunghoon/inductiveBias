@@ -66,7 +66,7 @@ def _compute_eigenvalues(args, model, loader, mixup_fn, top_n: int = 5) -> np.nd
                 )
 
         hessian_comp = hessian(
-            model, criterion, data=(x, y), cuda=(args.device == "cuda")
+            model, criterion, data=(x, y), cuda=args.device.startswith("cuda")
         )
         eigenvalues, _ = hessian_comp.eigenvalues(top_n=top_n)
         res.append(eigenvalues)

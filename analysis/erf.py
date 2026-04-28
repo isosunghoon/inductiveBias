@@ -20,7 +20,7 @@ import matplotlib.colors as mcolors
 # from erf.replknet_for_erf import RepLKNetForERF
 from torch import optim as optim
 
-from utils.config import parse_args, _apply_yaml
+from utils.config import parse_args, _apply_yaml, resolve_runtime_device
 from utils.dataset import get_dataloader, make_subset_loader
 from utils.build_model import build_model
 
@@ -132,6 +132,8 @@ def _get_args():
     args.distance_metric = pre_args.distance_metric
     args.custom_x_values = pre_args.custom_x_values
     args.custom_y_values = pre_args.custom_y_values
+
+    resolve_runtime_device(args)
     return args
 
 def _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size):

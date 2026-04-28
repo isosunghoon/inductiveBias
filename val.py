@@ -4,7 +4,7 @@ import torch
 import wandb
 from tqdm import tqdm
 
-from utils.config import parse_args
+from utils.config import parse_args, resolve_runtime_device
 from utils.dataset import get_dataloader
 from train import setup, set_seed
 
@@ -52,7 +52,7 @@ def main():
     pre_args, remaining = pre_parser.parse_known_args()
 
     args = parse_args(remaining)
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    resolve_runtime_device(args)
     set_seed(args.seed)
 
     # ckpt_path 결정

@@ -5,6 +5,7 @@ import os
 import torch
 import wandb
 
+from utils.config import resolve_runtime_device
 from train import setup, set_seed
 
 
@@ -47,7 +48,7 @@ def build_model(args, ckpt_name="best.pt"):
     Returns:
         model: Model on args.device with checkpoint loaded.
     """
-    args.device = getattr(args, "device", None) or ("cuda" if torch.cuda.is_available() else "cpu")
+    resolve_runtime_device(args)
     set_seed(args.seed)
 
     wandb.init(mode="disabled")
