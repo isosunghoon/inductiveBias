@@ -18,8 +18,8 @@ attn_drop: 0.0
 attn_proj_drop: 0.0
 
 # ===== Model =====
-img_size: 32
-patch_size: 4
+img_size: 224
+patch_size: 16
 embed_dim: 192
 depth: 12
 mlp_ratio: 4.0
@@ -55,4 +55,4 @@ fp16: true
 data_path: ./data
 save_best: true
 no_wandb: false
-project: final1
+project: model_resized
