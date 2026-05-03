@@ -1,6 +1,7 @@
 data
 output
 analysis_output
+pretrained_models
 
 .venv
 __pycache__
