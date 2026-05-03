@@ -1,5 +1,6 @@
 # ===== token mixer =====
 model: convformer
 kernel_size: 3
+norm_layer: groupnorm
 stride: 1
 conv_groups: 192
