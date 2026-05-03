@@ -21,7 +21,7 @@ from analysis.pipeline import run_pipeline
 # ---------------------------------------------------------------------------
 # Import analysis functions here as they are created
 # ---------------------------------------------------------------------------
-from analysis.erf import analyze_erf
+from analysis.erf import analyze_erf, analyze_erf_layers
 from analysis.loss_hessian import analyze_loss_landscape
 from analysis.cka import analyze_cka
 from analysis.calc_param import analyze_params
@@ -42,6 +42,7 @@ OUTPUT_ROOT  = "analysis_output"
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS: dict = {
     "erf":            analyze_erf,
+    "erf_layers":     analyze_erf_layers,
     # "loss_landscape": analyze_loss_landscape,
     # "params":         analyze_params,
     # "dis_occ":      analyze_dis_occ,
@@ -49,11 +50,11 @@ ANALYSIS_FNS: dict = {
 
 ANALYSIS_KWARGS = {
     # erf
-    "num_images":      10000,
-    "anchor_mode":     "custom",
-    "num_anchors":     3,
+    "num_images":      200,
+    "anchor_mode":     "all",
+    "num_anchors":     1,
     "distance_metric": "taxi",
-    "average":         False,        # Calculate ERD through accumulating all patch values
+    "average":         True,        # Calculate ERD through accumulating all patch values
     "custom_x_values": [0, 6, 4],
     "custom_y_values": [0, 3, 4],
     # loss_landscape
