@@ -93,7 +93,8 @@ class ERFAnalysis:
 
     @staticmethod
     def _compute_weight_per_dist(erf_map, anchor, distance_metric, patch_size):
-        """Return (unique_dists, weight_per_dist) arrays for a single anchor.
+        """
+        Return (unique_dists, weight_per_dist) arrays for a single anchor.
         weight_per_dist is the sum of patch weights at each distance, so it sums to 1.
         """
         py, px = anchor
