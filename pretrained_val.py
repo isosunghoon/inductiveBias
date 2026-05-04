@@ -17,9 +17,19 @@ CIFAR100_STD = (0.2675, 0.2565, 0.2761)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
+# Google Research ViT (.npz) checkpoints use (pixel - 127.5) / 127.5 → [-1, 1]
+INCEPTION_MEAN = (0.5, 0.5, 0.5)
+INCEPTION_STD = (0.5, 0.5, 0.5)
 
-def build_transforms(img_size: int, use_imagenet_norm: bool):
-    mean, std = (IMAGENET_MEAN, IMAGENET_STD) if use_imagenet_norm else (CIFAR100_MEAN, CIFAR100_STD)
+_NORM_TABLE = {
+    "imagenet": (IMAGENET_MEAN, IMAGENET_STD),
+    "cifar100": (CIFAR100_MEAN, CIFAR100_STD),
+    "inception": (INCEPTION_MEAN, INCEPTION_STD),
+}
+
+
+def build_transforms(img_size: int, norm: str):
+    mean, std = _NORM_TABLE[norm]
     return transforms.Compose(
         [
             transforms.Resize((img_size, img_size)),
@@ -29,8 +39,8 @@ def build_transforms(img_size: int, use_imagenet_norm: bool):
     )
 
 
-def build_loader(data_path: str, train: bool, img_size: int, batch_size: int, num_workers: int, use_imagenet_norm: bool):
-    tfm = build_transforms(img_size, use_imagenet_norm)
+def build_loader(data_path: str, train: bool, img_size: int, batch_size: int, num_workers: int, norm: str):
+    tfm = build_transforms(img_size, norm)
     ds = datasets.CIFAR100(root=data_path, train=train, download=True, transform=tfm)
     kwargs = dict(
         batch_size=batch_size,
@@ -114,15 +124,18 @@ def main():
     parser.add_argument(
         "--norm",
         type=str,
-        default="imagenet",
-        choices=["imagenet", "cifar100"],
-        help="Input normalization",
+        default="inception",
+        choices=["imagenet", "cifar100", "inception"],
+        help=(
+            "Input normalization. "
+            "Google Research .npz checkpoints require 'inception' (mean=std=0.5, i.e. [-1,1] range). "
+            "Use 'imagenet' or 'cifar100' only for checkpoints trained with those statistics."
+        ),
     )
     parser.add_argument("--device", type=str, default=None, help="e.g. cuda:0, cpu")
     args = parser.parse_args()
 
     device = args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu")
-    use_imagenet_norm = args.norm == "imagenet"
 
     print(f"[env] device={device}")
     print(f"[env] model={args.model}, num_classes={args.num_classes}, img_size={args.img_size}")
@@ -141,7 +154,7 @@ def main():
         img_size=args.img_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        use_imagenet_norm=use_imagenet_norm,
+        norm=args.norm,
     )
     test_acc = evaluate(model, test_loader, device)
     print(f"[result] test acc : {test_acc:.2f}%")
@@ -153,7 +166,7 @@ def main():
             img_size=args.img_size,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
-            use_imagenet_norm=use_imagenet_norm,
+            norm=args.norm,
         )
         train_acc = evaluate(model, train_loader, device)
         print(f"[result] train acc: {train_acc:.2f}%")
