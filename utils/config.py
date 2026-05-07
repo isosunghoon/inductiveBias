@@ -50,6 +50,9 @@ def get_parser():
     parser.add_argument("--augment", type=str, default="none",
                         choices=["none", "weak", "strong"],
                         help="augmentation level: none | weak (crop+flip) | strong (weak + RandAugment + RandomErasing + Mixup + CutMix + RepeatedAug)")
+    parser.add_argument("--norm_type", type=str, default="cifar100",
+                        choices=["cifar100", "imagenet", "inception"],
+                        help="input normalization scheme: cifar100 | imagenet | inception (mean=std=0.5, used by Google JAX ViT .npz checkpoints)")
 
     # validation 관련
     parser.add_argument("--eval_interval", type=int, default=5, help="run validation every N epochs")
@@ -92,6 +95,10 @@ def get_parser():
     parser.add_argument("--resnet_stem_channels", type=int, default=64, help="stem output channels for ResNet")
     parser.add_argument("--resnet_base_channels", type=int, default=64, help="base stage width for ResNet")
     parser.add_argument("--resnet_zero_init_residual", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=False, help="zero-init the last BN in each residual branch")
+
+    # Pretrained ViT (Google JAX .npz)
+    parser.add_argument("--pretrained_npz", type=str, default=None, help="path to Google JAX .npz checkpoint for pretrained ViT")
+    parser.add_argument("--pretrained_base_model", type=str, default="vit_base_patch16_224", help="timm model name used as the backbone for the pretrained ViT")
     return parser
 
     

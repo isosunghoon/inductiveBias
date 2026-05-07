@@ -1,0 +1,17 @@
+model: pretrained_vit
+is_metaformer: false
+
+# ===== Pretrained ViT (Google JAX .npz) =====
+pretrained_npz: ./pretrained_models/augreg_B_16-i21k-300ep-lr_0.001-aug_light0-wd_0.03-do_0.0-sd_0.0--cifar100-steps_10k-lr_0.001-res_224.npz
+pretrained_base_model: vit_base_patch16_224
+
+# ===== Input =====
+norm_type: inception
+
+# ===== Fine-tuning hparams =====
+# 이미 i21k+cifar100 fine-tuned 된 backbone에 GAP head를 새로 얹어 다시 학습.
+# Backbone은 거의 보존하고 head 위주로 적응시키는 작은 LR이 안정적.
+learning_rate: 1.0e-4
+warmup_epochs: 5
+epochs: 50
+augment: weak

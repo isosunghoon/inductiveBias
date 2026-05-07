@@ -9,6 +9,19 @@ from torch.utils.data import DataLoader, Subset
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
 CIFAR100_STD  = (0.2675, 0.2565, 0.2761)
 
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD  = (0.229, 0.224, 0.225)
+
+# Google Research ViT (.npz) checkpoints assume (pixel - 127.5) / 127.5 → [-1, 1]
+INCEPTION_MEAN = (0.5, 0.5, 0.5)
+INCEPTION_STD  = (0.5, 0.5, 0.5)
+
+NORM_TABLE = {
+    "cifar100": (CIFAR100_MEAN, CIFAR100_STD),
+    "imagenet": (IMAGENET_MEAN, IMAGENET_STD),
+    "inception": (INCEPTION_MEAN, INCEPTION_STD),
+}
+
 
 # ---------------------------------------------------------------------------
 # Repeated Augmentation Sampler
@@ -151,6 +164,7 @@ def get_dataloader(args):
     """
     if args.dataset == 'cifar100':
         level = getattr(args, 'augment', 'none')  # 'none' | 'weak' | 'strong'
+        norm_mean, norm_std = NORM_TABLE[getattr(args, 'norm_type', 'cifar100')]
 
         train_transforms = []
         test_transforms = []
@@ -174,7 +188,7 @@ def get_dataloader(args):
 
         train_transforms.extend([
             transforms.ToTensor(),
-            transforms.Normalize(CIFAR100_MEAN, CIFAR100_STD),
+            transforms.Normalize(norm_mean, norm_std),
         ])
 
         # strong 전용: RandomErasing (ToTensor 이후 텐서 단계)
@@ -185,7 +199,7 @@ def get_dataloader(args):
 
         test_transforms.extend([
             transforms.ToTensor(),
-            transforms.Normalize(CIFAR100_MEAN, CIFAR100_STD),
+            transforms.Normalize(norm_mean, norm_std),
         ])
 
         transform_train = transforms.Compose(train_transforms)
