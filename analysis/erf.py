@@ -82,7 +82,7 @@ class ERFAnalysis:
         """
         Return normalized patch_map
         Sum pixel-level erf_map into patches and normalize so all patch weights sum to 1.
-        Have to run this no matter we use patch_size 1 or not
+        Have to run this no matter patch_size is 1 or not - normalization
         """
         h, w = erf_map.shape
         H, W = h // patch_size, w // patch_size
@@ -130,7 +130,8 @@ class ERFAnalysis:
 
     @staticmethod
     def _compute_per_anchor_dist_stats(avg_maps, distance_metric, patch_size):
-        """For each anchor, compute (mean, std) of distance under that anchor's own ERF distribution.
+        """
+        For each anchor, compute (mean, std) of distance under that anchor's own ERF distribution.
         ERD is then defined as the average of per-anchor means: each anchor patch has a different
         geometric reach, so we treat ERF(Y_ij, ·) as a separate distribution per anchor and aggregate
         only after taking the per-anchor expectation/std.
@@ -326,7 +327,8 @@ class ERFAnalysis:
     # ------------------------------------------------------------------
 
     def _get_layer_grads_per_anchor(self, model, samples, layers, anchor):
-        """For one anchor (y, x), return {(a, b): np.ndarray} for every a < b.
+        """
+        For one anchor (y, x), return {(a, b): np.ndarray} for every a < b.
 
         activations[0] is the raw input image (samples); activations[i+1] is the
         output of layers[i]. So a=0 yields a pixel-grid grad of shape (h_in, w_in)
