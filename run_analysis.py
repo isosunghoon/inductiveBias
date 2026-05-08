@@ -32,7 +32,7 @@ from analysis.calc_param import analyze_params
 # CONFIGURATION  (CLI args override project_path and ckpt_name)
 # ---------------------------------------------------------------------------
 
-PROJECT_PATH = "output/final1"
+PROJECT_PATH = "output/model_resized"
 CKPT_NAME    = "best.pt"
 OUTPUT_ROOT  = "analysis_output"
 
@@ -41,7 +41,7 @@ OUTPUT_ROOT  = "analysis_output"
 # fn signature: (args, model, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS: dict = {
-    "erf":            analyze_erf,
+    # "erf":            analyze_erf,
     "erf_layers":     analyze_erf_layers,
     # "loss_landscape": analyze_loss_landscape,
     # "params":         analyze_params,
