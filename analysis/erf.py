@@ -326,21 +326,19 @@ class ERFAnalysis:
     # Variant 2: layer-to-layer ERF (gradient of layer b w.r.t. layer a, a < b)
     # ------------------------------------------------------------------
 
-    def _get_layer_grads_per_anchor(self, model, samples, layers, anchor):
+    def _get_all_layer_grads_per_anchors(self, model, samples, layers, anchors):
         """
-        For one anchor (y, x), return {(a, b): np.ndarray} for every a < b.
+        Single forward + per-anchor backward. Returns {anchor: {(a, b): np.ndarray}}.
 
         activations[0] is the raw input image (samples); activations[i+1] is the
         output of layers[i]. So a=0 yields a pixel-grid grad of shape (h_in, w_in)
         and a>=1 yields a patch-grid grad of shape (H, W).
 
-        Hooks capture each layer's output WITHOUT detach so they stay in the autograd
-        graph. A single forward pass populates all activations; then for each target b
-        we run one backward call with inputs=[X_0, ..., X_{b-1}] to harvest all a<b
-        gradients at once. retain_graph=True is required because we backprop multiple
-        times through the same graph (once per b).
+        One forward populates all hooks; then for each anchor and each target b we
+        run torch.autograd.grad against inputs=[X_0, ..., X_{b-1}]. retain_graph=True
+        is required because the same graph is traversed multiple times (once per
+        anchor × b).
         """
-        y, x = anchor
         activations = {}
         hooks = []
 
@@ -353,33 +351,34 @@ class ERFAnalysis:
             for i, layer in enumerate(layers):
                 hooks.append(layer.register_forward_hook(make_hook(i + 1)))
 
-            # Raw input image as activation 0. samples is already in the autograd
-            # graph (caller sets requires_grad=True), so torch.autograd.grad can
-            # backprop into it just like any hooked activation.
             activations[0] = samples
             with torch.enable_grad():
                 _ = model(samples)
 
             L = len(layers) + 1
-            layer_pair_to_grad = {}
+            anchor_to_pairs = {}
 
-            for b in range(1, L):
-                X_b = activations[b]
-                target = torch.nn.functional.relu(X_b[:, :, y, x]).sum()
-                inputs = [activations[a] for a in range(b)]
-                grads = torch.autograd.grad(target, inputs=inputs, retain_graph=True)
-                for a, g in enumerate(grads):
-                    aggregated = torch.nn.functional.relu(g).sum(dim=(0, 1))
-                    layer_pair_to_grad[(a, b)] = aggregated.detach().cpu().numpy()
+            for (y, x) in anchors:
+                pair_to_grad = {}
+                for b in range(1, L):
+                    X_b = activations[b]
+                    target = torch.nn.functional.relu(X_b[:, :, y, x]).sum()
+                    inputs = [activations[a] for a in range(b)]
+                    grads = torch.autograd.grad(target, inputs=inputs, retain_graph=True)
+                    for a, g in enumerate(grads):
+                        aggregated = torch.nn.functional.relu(g).sum(dim=(0, 1))
+                        pair_to_grad[(a, b)] = aggregated.detach().cpu().numpy()
+                anchor_to_pairs[(y, x)] = pair_to_grad
 
-            return layer_pair_to_grad
+            return anchor_to_pairs
         finally:
             for h in hooks:
                 h.remove()
 
     def analyze_layers(self, args, model, num_images=50,
                        anchor_mode="center", num_anchors=4,
-                       custom_x_values=[], custom_y_values=[], **kwargs):
+                       custom_x_values=[], custom_y_values=[],
+                       batch_size=16, **kwargs):
         """Pipeline-compatible block-wise ERF analysis (variant 2).
 
         For each layer pair (a, b) with a < b, computes the ERD of layer b's output
@@ -398,12 +397,13 @@ class ERFAnalysis:
         L = len(layers) + 1  # +1 for raw input image at index 0
 
         args.num_images = num_images
-        args.train_batch_size = 1
+        args.train_batch_size = batch_size
 
         train_loader, _, _ = get_dataloader(args)
         sample_loader = make_subset_loader(args, train_loader, ratio=1.0)
         total = min(num_images, len(sample_loader.dataset))
-        print(f"ERF (block-wise): L={L} layers, accumulating over up to {num_images} images")
+        n_batches = (total + batch_size - 1) // batch_size
+        print(f"ERF (block-wise): L={L} layers, batch_size={batch_size}, accumulating over up to {num_images} images")
 
         # Probe forward to determine block-resolution spatial grid (H, W) and
         # input-pixel grid (h_in, w_in). model_patch_size = h_in // H is the
@@ -434,24 +434,19 @@ class ERFAnalysis:
                         accum[(a, b, anchor)] = np.zeros((H, W), dtype=np.float64)
 
         count = 0
-        for samples, _ in tqdm(sample_loader, total=total, desc="Computing layer ERF"):
+        for samples, _ in tqdm(sample_loader, total=n_batches, desc="Computing layer ERF"):
             if count >= num_images:
                 break
             samples = samples.cuda(non_blocking=True)
             samples.requires_grad = True
 
-            per_anchor_pairs = {}
-            skip = False
-            for anchor in anchors:
-                pair_to_grad = self._get_layer_grads_per_anchor(model, samples, layers, anchor)
-                for grad_map in pair_to_grad.values():
-                    if np.isnan(np.sum(grad_map)):
-                        skip = True
-                        break
-                if skip:
-                    break
-                per_anchor_pairs[anchor] = pair_to_grad
+            per_anchor_pairs = self._get_all_layer_grads_per_anchors(model, samples, layers, anchors)
 
+            skip = any(
+                np.isnan(np.sum(grad_map))
+                for pair_to_grad in per_anchor_pairs.values()
+                for grad_map in pair_to_grad.values()
+            )
             if skip:
                 print("got NAN, skip")
                 continue
