@@ -49,7 +49,7 @@ augment: strong
 
 # ===== Etc =====
 num_classes: 100
-num_workers: 16
+num_workers: 8
 log_interval: 50
 fp16: true
 data_path: ./data

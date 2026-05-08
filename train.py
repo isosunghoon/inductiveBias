@@ -9,6 +9,7 @@ import models.token_mixers as TM
 import models.channel_mixers as CM
 import models.norm_layers as NL
 import models.resnet as RN
+import models.pretrained_vit as PV
 from models.sam import SAM
 
 from utils.config import parse_args, resolve_runtime_device
@@ -96,6 +97,10 @@ def setup(args):
     else:
         if args.model =='resnet18':
             model = RN.build_resnet(args)
+        elif args.model == 'pretrained_vit':
+            model = PV.build_pretrained_vit(args)
+        else:
+            raise ValueError(f"Unsupported non-MetaFormer model: {args.model}")
 
     model.to(args.device)
     return torch.compile(model)
