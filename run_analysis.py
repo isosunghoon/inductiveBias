@@ -50,9 +50,9 @@ ANALYSIS_FNS: dict = {
 
 ANALYSIS_KWARGS = {
     # erf
-    "num_images":      200,
+    "num_images":      2000,
     "anchor_mode":     "all",
-    "num_anchors":     1,
+    "num_anchors":     196,
     "distance_metric": "taxi",
     "average":         True,        # Calculate ERD through accumulating all patch values
     "custom_x_values": [0, 6, 4],

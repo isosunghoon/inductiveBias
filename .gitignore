@@ -1,6 +1,7 @@
 data
 output
 analysis_output
+analysis_output2
 pretrained_models
 
 .venv

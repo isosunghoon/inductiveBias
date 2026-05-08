@@ -82,7 +82,7 @@ class ERFAnalysis:
         """
         Return normalized patch_map
         Sum pixel-level erf_map into patches and normalize so all patch weights sum to 1.
-        Have to run this no matter we use patch_size 1 or not
+        Have to run this no matter patch_size is 1 or not - normalization
         """
         h, w = erf_map.shape
         H, W = h // patch_size, w // patch_size
@@ -130,7 +130,8 @@ class ERFAnalysis:
 
     @staticmethod
     def _compute_per_anchor_dist_stats(avg_maps, distance_metric, patch_size):
-        """For each anchor, compute (mean, std) of distance under that anchor's own ERF distribution.
+        """
+        For each anchor, compute (mean, std) of distance under that anchor's own ERF distribution.
         ERD is then defined as the average of per-anchor means: each anchor patch has a different
         geometric reach, so we treat ERF(Y_ij, ·) as a separate distribution per anchor and aggregate
         only after taking the per-anchor expectation/std.
@@ -326,7 +327,12 @@ class ERFAnalysis:
     # ------------------------------------------------------------------
 
     def _get_layer_grads_per_anchor(self, model, samples, layers, anchor):
-        """For one anchor (y, x), return {(a, b): np.ndarray of shape (H, W)} for every a < b.
+        """
+        For one anchor (y, x), return {(a, b): np.ndarray} for every a < b.
+
+        activations[0] is the raw input image (samples); activations[i+1] is the
+        output of layers[i]. So a=0 yields a pixel-grid grad of shape (h_in, w_in)
+        and a>=1 yields a patch-grid grad of shape (H, W).
 
         Hooks capture each layer's output WITHOUT detach so they stay in the autograd
         graph. A single forward pass populates all activations; then for each target b
@@ -345,12 +351,16 @@ class ERFAnalysis:
 
         try:
             for i, layer in enumerate(layers):
-                hooks.append(layer.register_forward_hook(make_hook(i)))
+                hooks.append(layer.register_forward_hook(make_hook(i + 1)))
 
+            # Raw input image as activation 0. samples is already in the autograd
+            # graph (caller sets requires_grad=True), so torch.autograd.grad can
+            # backprop into it just like any hooked activation.
+            activations[0] = samples
             with torch.enable_grad():
                 _ = model(samples)
 
-            L = len(layers)
+            L = len(layers) + 1
             layer_pair_to_grad = {}
 
             for b in range(1, L):
@@ -374,7 +384,8 @@ class ERFAnalysis:
 
         For each layer pair (a, b) with a < b, computes the ERD of layer b's output
         w.r.t. layer a's activation. Returns an (L, L) symmetric ERD matrix, where
-        L = 1 + n_blocks (index 0 = patch_embed, indices 1..L-1 = blocks).
+        L = 2 + n_blocks (index 0 = raw input image, 1 = patch_embed,
+        2..L-1 = blocks).
         """
         from analysis.pipeline import AnalysisResult
 
@@ -384,7 +395,7 @@ class ERFAnalysis:
         model.cuda().eval()
 
         layers = [model.patch_embed] + list(model.blocks)
-        L = len(layers)
+        L = len(layers) + 1  # +1 for raw input image at index 0
 
         args.num_images = num_images
         args.train_batch_size = 1
@@ -394,23 +405,33 @@ class ERFAnalysis:
         total = min(num_images, len(sample_loader.dataset))
         print(f"ERF (block-wise): L={L} layers, accumulating over up to {num_images} images")
 
-        # Probe forward to determine block-resolution spatial grid (H, W).
+        # Probe forward to determine block-resolution spatial grid (H, W) and
+        # input-pixel grid (h_in, w_in). model_patch_size = h_in // H is the
+        # actual patch size (used to aggregate the a=0 pixel grad to the patch
+        # grid so its ERD is in the same units as a>=1 pairs).
         first_batch = next(iter(sample_loader))
         first_samples = first_batch[0].cuda(non_blocking=True)
         first_samples.requires_grad_(True)
         with torch.enable_grad():
             probe_out = model(first_samples)
         _, _, H, W = probe_out.shape
+        _, _, h_in, w_in = first_samples.shape
+        model_patch_size = h_in // H
 
         anchors = choose_anchor_points(H, W, anchor_mode, num_anchors,
                                        custom_x_values, custom_y_values)
         print(f"Selected anchors: {anchors}")
 
+        # a=0 grads are on the pixel grid (h_in, w_in); a>=1 are on the patch
+        # grid (H, W). Allocate accumulators with the right shape per a.
         accum = {}
         for a in range(L):
             for b in range(a + 1, L):
                 for anchor in anchors:
-                    accum[(a, b, anchor)] = np.zeros((H, W), dtype=np.float64)
+                    if a == 0:
+                        accum[(a, b, anchor)] = np.zeros((h_in, w_in), dtype=np.float64)
+                    else:
+                        accum[(a, b, anchor)] = np.zeros((H, W), dtype=np.float64)
 
         count = 0
         for samples, _ in tqdm(sample_loader, total=total, desc="Computing layer ERF"):
@@ -443,11 +464,14 @@ class ERFAnalysis:
         erd_matrix = np.zeros((L, L), dtype=np.float64)
         for a in range(L):
             for b in range(a + 1, L):
+                # a=0: aggregate pixel grad to patch grid via _erf_to_patch_map.
+                # a>=1: grad is already on the patch grid, so patch_size=1.
+                ps = model_patch_size if a == 0 else 1
                 anchor_erds = []
                 for anchor in anchors:
                     avg_map = accum[(a, b, anchor)] / count
                     erd = self.compute_long_range_metric(
-                        avg_map, anchor, self.distance_metric, patch_size=1)
+                        avg_map, anchor, self.distance_metric, patch_size=ps)
                     anchor_erds.append(erd)
                 mean_erd = float(np.mean(anchor_erds))
                 erd_matrix[a, b] = mean_erd
@@ -475,8 +499,12 @@ class ERFAnalysis:
 # ============================================================================
 
 def _layer_labels(n):
-    """['patch_embed', 'block_0', 'block_1', ...] — matches cka._layer_labels."""
-    return ["patch_embed"] + [f"block_{i}" for i in range(n - 1)]
+    """['input', 'patch_embed', 'block_0', 'block_1', ...] for the raw-image-included matrix.
+
+    Note: deliberately diverges from cka._layer_labels — CKA does not treat the
+    raw image as a layer, so its label list has no 'input' entry.
+    """
+    return ["input", "patch_embed"] + [f"block_{i}" for i in range(n - 2)]
 
 
 def _make_layer_erd_heatmap(erd_matrix: np.ndarray, model_name: str) -> plt.Figure:
