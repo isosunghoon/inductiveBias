@@ -13,3 +13,5 @@ norm_type: inception
 # Backbone은 거의 보존하고 head 위주로 적응시키는 작은 LR이 안정적.
 learning_rate: 1.0e-4
 augment: weak
+warmup_epochs: 5
+epochs: 50

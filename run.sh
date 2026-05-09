@@ -5,4 +5,6 @@ tsp python train.py --config config/denseformer.yaml --run_name denseformer --de
 tsp python train.py --config config/identity.yaml --run_name identity --device_type 0 --train_batch_size 1024
 tsp python train.py --config config/localvit.yaml --run_name localvit_w5 --device_type 0 --train_batch_size 1024 --window_size 5
 tsp python train.py --config config/convformer.yaml --run_name convformer_w5 --device_type 0 --train_batch_size 1024 --kernel_size 5
-tsp python train.py --config config/pretrained_vit.yaml --run_name pretrained_vit --device_type 0
+tsp python train.py --config config/pretrained_vit.yaml --run_name pretrained_vit --device_type 0 --train_batch_size 256
+tsp python train.py --config config/localvit.yaml --run_name localvit_w7 --device_type 0 --train_batch_size 1024 --window_size 7
+tsp python train.py --config config/convformer.yaml --run_name convformer_w7 --device_type 0 --train_batch_size 1024 --kernel_size 7
