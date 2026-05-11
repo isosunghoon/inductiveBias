@@ -687,20 +687,22 @@ def _display_name_from_weight_file(path: str) -> str:
         "vit": "ViT",
         "localvit": "local ViT",
         "localvit_w5": "local ViT w5",
+        "localvit_w7": "local ViT w7",
         "denseformer": "MLP mixer",
         "convformer": "Convformer",
         "convformer_w5": "Convformer w5",
         "convformer_w7": "Convformer w7",
-        "identity": "Identity",
+        #"identity": "Identity",
     }
     return labels.get(stem, stem)
 
 
-def discover_weight_per_distance_files(npy_dir: str) -> dict:
+def discover_weight_per_distance_files(npy_dir: str, exclude=None) -> dict:
     """
     Find *_weight_per_distance_data.npy files in npy_dir.
     Returns an ordered mapping of display name -> path.
     """
+    exclude = [item.lower() for item in (exclude or [])]
     files = sorted(
         os.path.join(npy_dir, name)
         for name in os.listdir(npy_dir)
@@ -710,16 +712,27 @@ def discover_weight_per_distance_files(npy_dir: str) -> dict:
         raise FileNotFoundError(f"No *_weight_per_distance_data.npy files found in {npy_dir}")
 
     preferred_order = [
-        "Identity",
+        # "Identity",
         "local ViT",
         "local ViT w5",
+        "local ViT w7",
         "Convformer",
         "Convformer w5",
         "Convformer w7",
         "MLP mixer",
         "ViT",
     ]
-    name_to_path = {_display_name_from_weight_file(path): path for path in files}
+    name_to_path = {}
+    for path in files:
+        display_name = _display_name_from_weight_file(path)
+        searchable = f"{display_name} {os.path.basename(path)}".lower()
+        if any(pattern in searchable for pattern in exclude):
+            continue
+        name_to_path[display_name] = path
+    if not name_to_path:
+        raise FileNotFoundError(
+            f"No weight_per_distance_data.npy files left in {npy_dir} after excludes: {exclude}"
+        )
     ordered = {
         name: name_to_path[name]
         for name in preferred_order
@@ -843,9 +856,15 @@ if __name__ == "__main__":
     )
     parser.add_argument("--distance_metric", type=str, default="taxi")
     parser.add_argument("--dpi", type=int, default=220)
+    parser.add_argument(
+        "--exclude",
+        nargs="*",
+        default=[],
+        help="Case-insensitive substrings to exclude from display names or filenames.",
+    )
     args = parser.parse_args()
 
-    npy_files = discover_weight_per_distance_files(args.npy_dir)
+    npy_files = discover_weight_per_distance_files(args.npy_dir, exclude=args.exclude)
     weight_save_path = os.path.join(args.npy_dir, "combined_weight_per_distance.png")
     erd_save_path = os.path.join(args.npy_dir, "combined_erd.png")
     summary_save_path = os.path.join(args.npy_dir, "combined_erd_summary.csv")

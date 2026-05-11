@@ -42,8 +42,8 @@ OUTPUT_ROOT  = "analysis_output"
 # fn signature: (args, model, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS: dict = {
-     "erf":            analyze_erf,
-    #"erf_layers":     analyze_erf_layers,
+    # "erf":            analyze_erf,
+     "erf_layers":     analyze_erf_layers,
     # "loss_landscape": analyze_loss_landscape,
     # "params":         analyze_params,
     # "dis_occ":      analyze_dis_occ,
