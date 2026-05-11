@@ -23,6 +23,7 @@ from analysis.pipeline import run_pipeline
 # ---------------------------------------------------------------------------
 from analysis.erf import analyze_erf, analyze_erf_layers
 from analysis.loss_hessian import analyze_loss_landscape
+from analysis.hessian_spectrum import analyze_hessian_spectrum
 from analysis.cka import analyze_cka
 from analysis.calc_param import analyze_params
 # from analysis.dis_occ_fn import analyze_dis_occ
@@ -41,24 +42,28 @@ OUTPUT_ROOT  = "analysis_output"
 # fn signature: (args, model, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS: dict = {
-    # "erf":            analyze_erf,
-    "erf_layers":     analyze_erf_layers,
+     "erf":            analyze_erf,
+    #"erf_layers":     analyze_erf_layers,
     # "loss_landscape": analyze_loss_landscape,
     # "params":         analyze_params,
     # "dis_occ":      analyze_dis_occ,
+    #"hessian_spectrum": analyze_hessian_spectrum,
 }
 
 ANALYSIS_KWARGS = {
     # erf
-    "num_images":      2000,
-    "anchor_mode":     "random",
+    "num_images":      200,
+    "anchor_mode":     "all",
     "num_anchors":     16,
     "distance_metric": "taxi",
     "average":         True,        # Calculate ERD through accumulating all patch values
     "custom_x_values": [0, 6, 4],
     "custom_y_values": [0, 3, 4],
-    # loss_landscape / erf shared
+    # hessian_spectrum
     "batch_size":      16,
+    "lanczos_steps":   30,
+    "num_batches":     50,
+    # loss_landscape / erf shared
     "ratio":           1,
     "top_n":           5,
 }
@@ -68,7 +73,7 @@ ANALYSIS_KWARGS = {
 # fn signature: (args1, model1, args2, model2, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS_PAIR: dict = {
-    "cka": analyze_cka,
+    # "cka": analyze_cka,
 }
 
 ANALYSIS_KWARGS_PAIR = {

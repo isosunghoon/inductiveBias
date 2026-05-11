@@ -5,8 +5,10 @@
 # --------------------------------------------------------'
 
 import os
+import sys
 import json
 import argparse
+import re
 import numpy as np
 import types
 import torch
@@ -17,6 +19,10 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from torch import optim as optim
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from utils.config import parse_args, _apply_yaml, resolve_runtime_device
 from utils.dataset import get_dataloader, make_subset_loader
@@ -383,8 +389,8 @@ class ERFAnalysis:
 
         For each layer pair (a, b) with a < b, computes the ERD of layer b's output
         w.r.t. layer a's activation. Returns an (L, L) symmetric ERD matrix, where
-        L = 2 + n_blocks (index 0 = raw input image, 1 = patch_embed,
-        2..L-1 = blocks).
+        L = 3 + n_blocks (index 0 = raw input image, 1 = patch_embed,
+        2..L-2 = blocks, L-1 = final norm).
         """
         from analysis.pipeline import AnalysisResult
 
@@ -393,7 +399,7 @@ class ERFAnalysis:
         model.forward = types.MethodType(erf_forward, model)
         model.cuda().eval()
 
-        layers = [model.patch_embed] + list(model.blocks)
+        layers = [model.patch_embed] + list(model.blocks) + [model.norm]
         L = len(layers) + 1  # +1 for raw input image at index 0
 
         args.num_images = num_images
@@ -494,12 +500,14 @@ class ERFAnalysis:
 # ============================================================================
 
 def _layer_labels(n):
-    """['input', 'patch_embed', 'block_0', 'block_1', ...] for the raw-image-included matrix.
+    """['input', 'patch_embed', 'block_0', ..., 'final_norm'] for the raw-image-included matrix.
 
     Note: deliberately diverges from cka._layer_labels — CKA does not treat the
     raw image as a layer, so its label list has no 'input' entry.
     """
-    return ["input", "patch_embed"] + [f"block_{i}" for i in range(n - 2)]
+    if n <= 2:
+        return ["input", "patch_embed"][:n]
+    return ["input", "patch_embed"] + [f"block_{i}" for i in range(n - 3)] + ["final_norm"]
 
 
 def _make_layer_erd_heatmap(erd_matrix: np.ndarray, model_name: str) -> plt.Figure:
@@ -608,7 +616,11 @@ def make_erf_heatmap(avg_maps, token_mixer_name: str, patch_size: int =4):
 def make_combined_weight_per_dist_plot(npy_files: dict, distance_metric="taxi"):
     """
     Load weight-per-distance .npy files for multiple models and overlay them on one plot.
-    Each .npy must have shape (2, n): row 0 = distances, row 1 = avg weights.
+    Each .npy must have shape (2+, n): row 0 = distances, row 1 = avg weights.
+    Optional rows:
+      row 2 = SE repeated across distances
+      row 3 = ERD/mean distance repeated across distances
+      row 4 = intrinsic std repeated across distances
     Matches the format of _make_weight_per_dis_fig (average=True).
 
     Parameters
@@ -644,6 +656,125 @@ def make_combined_weight_per_dist_plot(npy_files: dict, distance_metric="taxi"):
     ax.legend(fontsize=10)
     plt.tight_layout()
     return fig
+
+
+def _read_weight_per_dist_summary(path: str):
+    """Return distance curve and ERD summary fields from a weight_per_distance_data.npy."""
+    data = np.load(path)
+    if data.ndim != 2 or data.shape[0] < 2:
+        raise ValueError(f"{path} must have shape (2+, n), got {data.shape}")
+
+    all_dists, avg_weights = data[0], data[1]
+    if data.shape[0] >= 5:
+        se_d = float(data[2][0])
+        mean_d = float(data[3][0])
+        intrinsic_std = float(data[4][0])
+    elif data.shape[0] >= 3:
+        se_d = float(data[2][0])
+        mean_d, intrinsic_std = ERFAnalysis._compute_erf_dist_std(all_dists, avg_weights)
+    else:
+        se_d = None
+        mean_d, intrinsic_std = ERFAnalysis._compute_erf_dist_std(all_dists, avg_weights)
+
+    return all_dists, avg_weights, mean_d, se_d, intrinsic_std
+
+
+def _display_name_from_weight_file(path: str) -> str:
+    """Convert timestamped output filenames to stable labels."""
+    stem = os.path.basename(path).replace("_weight_per_distance_data.npy", "")
+    stem = re.sub(r"-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", "", stem)
+    labels = {
+        "vit": "ViT",
+        "localvit": "local ViT",
+        "localvit_w5": "local ViT w5",
+        "denseformer": "MLP mixer",
+        "convformer": "Convformer",
+        "convformer_w5": "Convformer w5",
+        "convformer_w7": "Convformer w7",
+        "identity": "Identity",
+    }
+    return labels.get(stem, stem)
+
+
+def discover_weight_per_distance_files(npy_dir: str) -> dict:
+    """
+    Find *_weight_per_distance_data.npy files in npy_dir.
+    Returns an ordered mapping of display name -> path.
+    """
+    files = sorted(
+        os.path.join(npy_dir, name)
+        for name in os.listdir(npy_dir)
+        if name.endswith("_weight_per_distance_data.npy")
+    )
+    if not files:
+        raise FileNotFoundError(f"No *_weight_per_distance_data.npy files found in {npy_dir}")
+
+    preferred_order = [
+        "Identity",
+        "local ViT",
+        "local ViT w5",
+        "Convformer",
+        "Convformer w5",
+        "Convformer w7",
+        "MLP mixer",
+        "ViT",
+    ]
+    name_to_path = {_display_name_from_weight_file(path): path for path in files}
+    ordered = {
+        name: name_to_path[name]
+        for name in preferred_order
+        if name in name_to_path
+    }
+    ordered.update({name: path for name, path in name_to_path.items() if name not in ordered})
+    return ordered
+
+
+def make_erd_summary_plot(npy_files: dict):
+    """Build a bar plot of ERD/mean distance for several weight_per_distance_data.npy files."""
+    names, means, errors = [], [], []
+    for model_name, path in npy_files.items():
+        _, _, mean_d, se_d, intrinsic_std = _read_weight_per_dist_summary(path)
+        names.append(model_name)
+        means.append(mean_d)
+        errors.append(se_d if se_d is not None else intrinsic_std)
+
+    fig_w = max(7, len(names) * 0.9)
+    fig, ax = plt.subplots(figsize=(fig_w, 4))
+    x = np.arange(len(names))
+    bars = ax.bar(x, means, yerr=errors, capsize=4, color="#4C78A8", alpha=0.9)
+    ax.set_ylabel("ERD (mean distance)", fontsize=13)
+    ax.set_title("ERD by Token Mixer", fontsize=14)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=35, ha="right", fontsize=10)
+    ax.tick_params(axis="y", labelsize=11)
+    ax.grid(axis="y", alpha=0.25)
+    ax.set_axisbelow(True)
+
+    for bar, value in zip(bars, means):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
+    plt.tight_layout()
+    return fig
+
+
+def save_erd_summary(npy_files: dict, save_path: str):
+    """Write a small CSV-style ERD summary next to the generated plots."""
+    rows = ["model,erd,se,intrinsic_std,path"]
+    for model_name, path in npy_files.items():
+        _, _, mean_d, se_d, intrinsic_std = _read_weight_per_dist_summary(path)
+        se_text = "" if se_d is None else f"{se_d:.10f}"
+        rows.append(
+            f"{model_name},{mean_d:.10f},{se_text},{intrinsic_std:.10f},{path}"
+        )
+    with open(save_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(rows) + "\n")
 
 
 # ============================================================================
@@ -703,20 +834,33 @@ def _get_args():
 
 
 if __name__ == "__main__":
-    token_mixers = {
-        "ViT": "vit",
-        "local ViT": "localvit",
-        "MLP mixer": "denseformer",
-        "Convformer":"convformer",
-        }
-    NPY_FILES = {
-        k: f"analysis_output/erf/final1/{w}_weight_per_distance_data.npy" for k,w in token_mixers.items()
-    }
-    DISTANCE_METRIC = "taxi"
-    SAVE_PATH = "analysis_output/erf/final1/combined_weight_per_distance.png"
+    parser = argparse.ArgumentParser(description="Plot saved ERF weight-per-distance .npy files.")
+    parser.add_argument(
+        "--npy_dir",
+        type=str,
+        default="analysis_output/erf/model_resized",
+        help="Directory containing *_weight_per_distance_data.npy files.",
+    )
+    parser.add_argument("--distance_metric", type=str, default="taxi")
+    parser.add_argument("--dpi", type=int, default=220)
+    args = parser.parse_args()
 
-    fig = make_combined_weight_per_dist_plot(NPY_FILES, distance_metric=DISTANCE_METRIC)
-    os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
-    fig.savefig(SAVE_PATH, bbox_inches="tight", dpi=220)
+    npy_files = discover_weight_per_distance_files(args.npy_dir)
+    weight_save_path = os.path.join(args.npy_dir, "combined_weight_per_distance.png")
+    erd_save_path = os.path.join(args.npy_dir, "combined_erd.png")
+    summary_save_path = os.path.join(args.npy_dir, "combined_erd_summary.csv")
+
+    fig = make_combined_weight_per_dist_plot(npy_files, distance_metric=args.distance_metric)
+    fig.savefig(weight_save_path, bbox_inches="tight", dpi=args.dpi)
     plt.close(fig)
-    print(f"Saved combined plot to {SAVE_PATH}")
+
+    fig = make_erd_summary_plot(npy_files)
+    fig.savefig(erd_save_path, bbox_inches="tight", dpi=args.dpi)
+    plt.close(fig)
+
+    save_erd_summary(npy_files, summary_save_path)
+
+    print(f"Loaded {len(npy_files)} npy files from {args.npy_dir}")
+    print(f"Saved combined weight-per-distance plot to {weight_save_path}")
+    print(f"Saved ERD plot to {erd_save_path}")
+    print(f"Saved ERD summary to {summary_save_path}")
