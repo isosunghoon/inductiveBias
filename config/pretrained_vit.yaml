@@ -1,5 +1,6 @@
 model: pretrained_vit
 is_metaformer: false
+project: pretrained_vit
 
 # ===== Pretrained ViT (Google JAX .npz) =====
 pretrained_npz: ./pretrained_models/augreg_B_16-i21k-300ep-lr_0.001-aug_light0-wd_0.03-do_0.0-sd_0.0--cifar100-steps_10k-lr_0.01-res_224.npz
