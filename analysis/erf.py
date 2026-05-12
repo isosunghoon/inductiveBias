@@ -10,7 +10,6 @@ import json
 import argparse
 import re
 import numpy as np
-import types
 import torch
 from timm.utils import AverageMeter
 from torchvision import datasets, transforms
@@ -27,21 +26,13 @@ if PROJECT_ROOT not in sys.path:
 from utils.config import parse_args, _apply_yaml, resolve_runtime_device
 from utils.dataset import get_dataloader, make_subset_loader
 from utils.build_model import build_model
-
-
-# ============================================================================
-# Module-level helpers
-# ============================================================================
-
-def erf_forward(self, x):
-    """
-    Remove Gap and return x with spatial information (H, W)
-    """
-    x = self.forward_embeddings(x)
-    x = self.forward_tokens(x)
-    x = self.norm(x)
-
-    return x
+from analysis._model_compat import (
+    aggregate_grad_to_2d,
+    display_name,
+    get_analysis_layers,
+    patch_erf_forward,
+    pick_anchor_target,
+)
 
 
 def choose_anchor_points(h_out=8, w_out=8, mode="random", num_anchors=8, custom_x_values=None, custom_y_values=None):
@@ -216,8 +207,7 @@ class ERFAnalysis:
         from analysis.pipeline import AnalysisResult
 
         np.random.seed(args.seed)
-        model = getattr(model, "_orig_mod", model)
-        model.forward = types.MethodType(erf_forward, model)
+        model = patch_erf_forward(model)
         model.cuda().eval()
 
         args.num_images = num_images
@@ -292,15 +282,7 @@ class ERFAnalysis:
             for a, m in avg_maps.items()
 
         '''
-        token_mixer_name = args.model
-        if token_mixer_name == "convformer":
-            token_mixer_name = "Convformer"
-        if token_mixer_name == "localvit":
-            token_mixer_name = "local ViT"
-        if token_mixer_name == "denseformer":
-            token_mixer_name = "MLP mixer"
-        if token_mixer_name == "vit":
-            token_mixer_name = "ViT"
+        token_mixer_name = display_name(args.model)
 
         results.append(AnalysisResult(
             "weight_per_distance" + ("" if average else "_by_anchor"),
@@ -368,12 +350,11 @@ class ERFAnalysis:
                 pair_to_grad = {}
                 for b in range(1, L):
                     X_b = activations[b]
-                    target = torch.nn.functional.relu(X_b[:, :, y, x]).sum()
+                    target = pick_anchor_target(X_b, (y, x))
                     inputs = [activations[a] for a in range(b)]
                     grads = torch.autograd.grad(target, inputs=inputs, retain_graph=True)
                     for a, g in enumerate(grads):
-                        aggregated = torch.nn.functional.relu(g).sum(dim=(0, 1))
-                        pair_to_grad[(a, b)] = aggregated.detach().cpu().numpy()
+                        pair_to_grad[(a, b)] = aggregate_grad_to_2d(g)
                 anchor_to_pairs[(y, x)] = pair_to_grad
 
             return anchor_to_pairs
@@ -389,17 +370,16 @@ class ERFAnalysis:
 
         For each layer pair (a, b) with a < b, computes the ERD of layer b's output
         w.r.t. layer a's activation. Returns an (L, L) symmetric ERD matrix, where
-        L = 3 + n_blocks (index 0 = raw input image, 1 = patch_embed,
-        2..L-2 = blocks, L-1 = final norm).
+        L = 2 + n_blocks (index 0 = raw input image, 1 = patch_embed,
+        2..L-1 = blocks).
         """
         from analysis.pipeline import AnalysisResult
 
         np.random.seed(args.seed)
-        model = getattr(model, "_orig_mod", model)
-        model.forward = types.MethodType(erf_forward, model)
+        model = patch_erf_forward(model)
         model.cuda().eval()
 
-        layers = [model.patch_embed] + list(model.blocks) + [model.norm]
+        layers = get_analysis_layers(model)
         L = len(layers) + 1  # +1 for raw input image at index 0
 
         args.num_images = num_images
@@ -478,15 +458,7 @@ class ERFAnalysis:
                 erd_matrix[a, b] = mean_erd
                 erd_matrix[b, a] = mean_erd
 
-        token_mixer_name = args.model
-        if token_mixer_name == "convformer":
-            token_mixer_name = "Convformer"
-        if token_mixer_name == "localvit":
-            token_mixer_name = "local ViT"
-        if token_mixer_name == "denseformer":
-            token_mixer_name = "MLP mixer"
-        if token_mixer_name == "vit":
-            token_mixer_name = "ViT"
+        token_mixer_name = display_name(args.model)
 
         fig = _make_layer_erd_heatmap(erd_matrix, token_mixer_name)
 
@@ -500,14 +472,14 @@ class ERFAnalysis:
 # ============================================================================
 
 def _layer_labels(n):
-    """['input', 'patch_embed', 'block_0', ..., 'final_norm'] for the raw-image-included matrix.
+    """['input', 'patch_embed', 'block_0', ...] for the raw-image-included matrix.
 
     Note: deliberately diverges from cka._layer_labels — CKA does not treat the
     raw image as a layer, so its label list has no 'input' entry.
     """
     if n <= 2:
         return ["input", "patch_embed"][:n]
-    return ["input", "patch_embed"] + [f"block_{i}" for i in range(n - 3)] + ["final_norm"]
+    return ["input", "patch_embed"] + [f"block_{i}" for i in range(n - 2)]
 
 
 def _make_layer_erd_heatmap(erd_matrix: np.ndarray, model_name: str) -> plt.Figure:

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-DEFAULT_NPY_DIR = "analysis_output/erf_layers/model_resized_all_200"
+DEFAULT_NPY_DIR = "analysis_output/erf_layers/model_resized"
 
 
 def display_name_from_erf_layers_file(path: str) -> str:

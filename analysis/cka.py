@@ -6,6 +6,7 @@ import torch
 import matplotlib.pyplot as plt
 
 from utils.dataset import get_dataloader
+from analysis._model_compat import display_name, get_analysis_layers
 
 
 def linear_cka(X, Y, epsilon=1e-8):
@@ -109,17 +110,6 @@ def compare_cka(args, model_1, layers_1, model_2, layers_2, dataloader, max_samp
     return cka_matrix
 
 
-_MODEL_DISPLAY_NAMES = {
-    "convformer": "Convformer",
-    "localvit":   "local ViT",
-    "denseformer": "MLP mixer",
-    "vit":        "ViT",
-}
-
-def _display_name(model_name: str) -> str:
-    return _MODEL_DISPLAY_NAMES.get(model_name, model_name)
-
-
 def _layer_labels(n):
     """Generate tick labels: ['patch_embed', 'block_0', 'block_1', ...]"""
     return ["patch_embed"] + [f"block_{i}" for i in range(n - 1)]
@@ -195,11 +185,11 @@ def analyze_cka(args1, model1, args2, model2, max_samples: int = 1024, **kwargs)
     """
     from analysis.pipeline import AnalysisResult
 
-    layers1 = [model1.patch_embed] + list(model1.blocks)
-    layers2 = [model2.patch_embed] + list(model2.blocks)
+    layers1 = get_analysis_layers(model1)
+    layers2 = get_analysis_layers(model2)
 
-    model1_name = _display_name(getattr(args1, "model", "model1"))
-    model2_name = _display_name(getattr(args2, "model", "model2"))
+    model1_name = display_name(getattr(args1, "model", "model1"))
+    model2_name = display_name(getattr(args2, "model", "model2"))
 
     print(f"[CKA] {model1_name} vs {model2_name}", flush=True)
 

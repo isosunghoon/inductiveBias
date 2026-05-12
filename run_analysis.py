@@ -52,7 +52,7 @@ ANALYSIS_FNS: dict = {
 
 ANALYSIS_KWARGS = {
     # erf
-    "num_images":      200,
+    "num_images":      30,
     "anchor_mode":     "all",
     "num_anchors":     16,
     "distance_metric": "taxi",
