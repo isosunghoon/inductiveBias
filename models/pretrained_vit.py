@@ -22,11 +22,11 @@ class GAPViT(nn.Module):
         # The original head is discarded below.
         backbone = timm.create_model(
             base_model,
-            pretrained=False,
+            pretrained=True,
             num_classes=num_classes,
             drop_path_rate=drop_path_rate,
         )
-        load_jax_npz_weights(backbone, str(npz_path))
+        # load_jax_npz_weights(backbone, str(npz_path))
 
         # Drop CLS token and align pos_embed to patch positions only.
         # timm's _pos_embed skips the CLS prepend when cls_token is None,

@@ -19,8 +19,8 @@ attn_drop: 0.0
 attn_proj_drop: 0.0
 
 # ===== Model =====
-img_size: 64
-patch_size: 8
+img_size: 224
+patch_size: 16
 embed_dim: 192
 depth: 12
 mlp_ratio: 4.0
@@ -34,7 +34,7 @@ use_layer_scale: false
 layer_scale_init_value: 1e-5
 
 # ===== Training =====
-epochs: 500
+epochs: 1000
 train_batch_size: 512
 test_batch_size: 256
 
