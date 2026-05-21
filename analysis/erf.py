@@ -569,7 +569,7 @@ def make_erf_heatmap(avg_maps, token_mixer_name: str, patch_size: int =4):
         im = ax.imshow(
             token_map,
             cmap="inferno",
-            norm=mcolors.PowerNorm(gamma=0.5, vmin=0.0, vmax=0.05)
+            norm=mcolors.PowerNorm(gamma=0.5, vmin=0.0, vmax=0.03)
         )
         cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cbar.ax.tick_params(labelsize=14)

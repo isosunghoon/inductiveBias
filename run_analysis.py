@@ -42,23 +42,23 @@ OUTPUT_ROOT  = "analysis_output"
 # fn signature: (args, model, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS: dict = {
-    # "erf":            analyze_erf,
-     "erf_layers":     analyze_erf_layers,
+    #  "erf":            analyze_erf,
+    # "erf_layers":     analyze_erf_layers,
     # "loss_landscape": analyze_loss_landscape,
-    # "params":         analyze_params,
+    "params":         analyze_params,
     # "dis_occ":      analyze_dis_occ,
     #"hessian_spectrum": analyze_hessian_spectrum,
 }
 
 ANALYSIS_KWARGS = {
     # erf
-    "num_images":      30,
-    "anchor_mode":     "all",
-    "num_anchors":     16,
+    "num_images":      500,
+    "anchor_mode":     "custom",
+    "num_anchors":     3,
     "distance_metric": "taxi",
     "average":         True,        # Calculate ERD through accumulating all patch values
-    "custom_x_values": [0, 6, 4],
-    "custom_y_values": [0, 3, 4],
+    "custom_x_values": [0, 7, 3],
+    "custom_y_values": [0, 7, 9],
     # hessian_spectrum
     "batch_size":      16,
     "lanczos_steps":   30,
