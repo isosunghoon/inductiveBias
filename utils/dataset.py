@@ -1,12 +1,15 @@
+import json
 import random
+import tarfile
 import zipfile
 from pathlib import Path
-from urllib.request import urlretrieve
+from urllib.request import urlopen, urlretrieve
 
 import numpy as np
 import torch
+from tqdm import tqdm
 from torchvision import transforms, datasets
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 
 
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
@@ -27,6 +30,12 @@ NORM_TABLE = {
 
 TINY_IMAGENET_NATIVE_SIZE = 64
 TINY_IMAGENET_NUM_CLASSES = 200
+
+IMAGENET_NATIVE_SIZE = 224
+IMAGENET_NUM_CLASSES = 1000
+
+IMAGENET100_NUM_CLASSES = 100
+DEFAULT_IMAGENET100_MANIFEST = Path("./data/imagenet100_resnet50_f1.json")
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +269,222 @@ def prepare_tiny_imagenet(data_path: str) -> Path:
     return root
 
 
+# ---------------------------------------------------------------------------
+# ImageNet-1K layout (ImageFolder-compatible)
+# ---------------------------------------------------------------------------
+
+IMAGENET_TRAIN_URL = "https://image-net.org/data/ILSVRC/2012/ILSVRC2012_img_train.tar"
+IMAGENET_VAL_URL = "https://image-net.org/data/ILSVRC/2012/ILSVRC2012_img_val.tar"
+IMAGENET_VALPREP_URL = (
+    "https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh"
+)
+IMAGENET_TRAIN_TAR_BYTES = 147_897_477_120   # ~138 GiB
+IMAGENET_VAL_TAR_BYTES = 6_744_924_160       # ~6.3 GiB
+
+
+def imagenet_root(data_path: str) -> Path:
+    return Path(data_path) / "imagenet"
+
+
+def _format_bytes(num_bytes: int) -> str:
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    size = float(num_bytes)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{num_bytes} B"
+
+
+def _download_file(url: str, dest: Path):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with urlopen(url) as head_resp:
+        remote_size = int(head_resp.headers.get("Content-Length", 0))
+
+    if dest.is_file():
+        local_size = dest.stat().st_size
+        if remote_size and local_size == remote_size:
+            print(f"[download] already present: {dest} ({_format_bytes(local_size)})")
+            return
+        print(f"[download] removing incomplete file: {dest}")
+        dest.unlink()
+
+    print(f"[download] {url}")
+    if remote_size:
+        print(f"[download] -> {dest} ({_format_bytes(remote_size)})")
+
+    with urlopen(url) as resp:
+        chunk_size = 8 * 1024 * 1024
+        with open(dest, "wb") as f, tqdm(
+            total=remote_size or None,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc=dest.name,
+        ) as pbar:
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                pbar.update(len(chunk))
+
+
+def _extract_tar(tar_path: Path, dest: Path):
+    print(f"[extract] {tar_path} -> {dest}")
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tar_path, "r") as tar:
+        for member in tar:
+            tar.extract(member, path=dest)
+
+
+def _imagenet_train_prepared(train_dir: Path) -> bool:
+    if not train_dir.is_dir():
+        return False
+    class_dirs = [d for d in train_dir.iterdir() if d.is_dir()]
+    if len(class_dirs) < IMAGENET_NUM_CLASSES:
+        return False
+    return any(class_dirs[0].glob("*.JPEG"))
+
+
+def _imagenet_val_prepared(val_dir: Path) -> bool:
+    if not val_dir.is_dir():
+        return False
+    if any(val_dir.glob("ILSVRC2012_val_*.JPEG")):
+        return False
+    class_dirs = [d for d in val_dir.iterdir() if d.is_dir()]
+    return len(class_dirs) >= IMAGENET_NUM_CLASSES and any(class_dirs[0].glob("*.JPEG"))
+
+
+def _prepare_imagenet_train(train_dir: Path):
+    nested_tars = sorted(train_dir.glob("*.tar"))
+    if not nested_tars:
+        return
+    for tar_path in nested_tars:
+        class_dir = train_dir / tar_path.stem
+        class_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(tar_path, "r") as tar:
+            tar.extractall(path=class_dir)
+        tar_path.unlink()
+
+
+def _prepare_imagenet_val(val_dir: Path):
+    if _imagenet_val_prepared(val_dir):
+        return
+
+    print(f"[prepare] organizing validation images under {val_dir} ...")
+    with urlopen(IMAGENET_VALPREP_URL) as resp:
+        valprep = resp.read().decode("utf-8")
+
+    for line in valprep.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("mkdir -p "):
+            (val_dir / line.split()[-1]).mkdir(parents=True, exist_ok=True)
+        elif line.startswith("mv "):
+            parts = line.split()
+            fname, synset = parts[1], parts[2].rstrip("/")
+            src = val_dir / fname
+            if src.is_file():
+                src.rename(val_dir / synset / fname)
+
+
+def prepare_imagenet(
+    data_path: str,
+    *,
+    download_train: bool = True,
+    download_val: bool = True,
+) -> Path:
+    """
+    Download and prepare ImageNet-1K into ImageFolder layout.
+
+    Expected result under {data_path}/imagenet/:
+      train/<wnid>/*.JPEG
+      val/<wnid>/*.JPEG
+
+    Archives are cached under {data_path}/imagenet/archives/.
+    """
+    root = imagenet_root(data_path)
+    archives = root / "archives"
+    train_dir = root / "train"
+    val_dir = root / "val"
+
+    if download_train and not _imagenet_train_prepared(train_dir):
+        train_tar = archives / "ILSVRC2012_img_train.tar"
+        _download_file(IMAGENET_TRAIN_URL, train_tar)
+        train_dir.mkdir(parents=True, exist_ok=True)
+        _extract_tar(train_tar, train_dir)
+        _prepare_imagenet_train(train_dir)
+
+    if download_val and not _imagenet_val_prepared(val_dir):
+        val_tar = archives / "ILSVRC2012_img_val.tar"
+        _download_file(IMAGENET_VAL_URL, val_tar)
+        val_dir.mkdir(parents=True, exist_ok=True)
+        _extract_tar(val_tar, val_dir)
+        _prepare_imagenet_val(val_dir)
+
+    if download_train and not _imagenet_train_prepared(train_dir):
+        raise RuntimeError(f"Failed to prepare ImageNet train split under {train_dir}")
+    if download_val and not _imagenet_val_prepared(val_dir):
+        raise RuntimeError(f"Failed to prepare ImageNet val split under {val_dir}")
+
+    return root
+
+
+# ---------------------------------------------------------------------------
+# ImageNet-100 subset loader
+# ---------------------------------------------------------------------------
+
+def default_imagenet100_manifest_path(data_path: str | None = None) -> Path:
+    if data_path:
+        return Path(data_path) / "imagenet100_resnet50_f1.json"
+    return DEFAULT_IMAGENET100_MANIFEST
+
+
+def load_imagenet100_manifest(path: str | Path) -> dict:
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"ImageNet-100 class manifest not found: {path}\n"
+            "Run `python select_imagenet100_classes.py --data_path <imagenet_root>` first."
+        )
+    with open(path, encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    class_indices = [int(i) for i in manifest["class_indices"]]
+    if len(class_indices) != IMAGENET100_NUM_CLASSES:
+        raise ValueError(
+            f"Expected {IMAGENET100_NUM_CLASSES} classes in manifest, got {len(class_indices)}"
+        )
+    manifest["class_indices"] = class_indices
+    return manifest
+
+
+class ClassSubsetDataset(Dataset):
+    """Filter an ImageFolder-style dataset to selected classes and remap labels to 0..K-1."""
+
+    def __init__(self, dataset: Dataset, class_indices: list[int]):
+        if not hasattr(dataset, "targets"):
+            raise TypeError("ClassSubsetDataset requires a dataset with a `.targets` attribute")
+
+        selected = set(class_indices)
+        self.dataset = dataset
+        self.class_indices = list(class_indices)
+        self.class_to_new = {old: new for new, old in enumerate(class_indices)}
+        self.indices = [i for i, target in enumerate(dataset.targets) if target in selected]
+
+        if not self.indices:
+            raise ValueError("No samples found for the selected class indices")
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, idx: int):
+        image, target = self.dataset[self.indices[idx]]
+        return image, self.class_to_new[target]
+
+
 def _build_transforms(args, native_size: int):
     level = getattr(args, "augment", "none")  # 'none' | 'weak' | 'strong'
     norm_mean, norm_std = NORM_TABLE[getattr(args, "norm_type", "cifar100")]
@@ -360,6 +585,7 @@ def get_dataloader(args):
     Supported datasets:
       - cifar100
       - tiny-imagenet (or tiny_imagenet): expects {data_path}/tiny-imagenet-200/
+      - imagenet-100: ResNet-50 F1 top-100 subset of ImageNet-1K
     """
     dataset = args.dataset.replace("_", "-")
 
@@ -386,6 +612,35 @@ def get_dataloader(args):
         )
         trainset = datasets.ImageFolder(root / "train", transform=transform_train)
         testset = datasets.ImageFolder(root / "val", transform=transform_test)
+        return _build_loaders(args, trainset, testset, level)
+
+    if dataset == "imagenet-100":
+        if args.num_classes != IMAGENET100_NUM_CLASSES:
+            raise ValueError(
+                f"imagenet-100 requires num_classes={IMAGENET100_NUM_CLASSES}, "
+                f"got {args.num_classes}"
+            )
+
+        root = prepare_imagenet(args.data_path)
+        train_dir = root / "train"
+        val_dir = root / "val"
+
+        manifest_path = getattr(args, "imagenet100_classes_path", None) or default_imagenet100_manifest_path(
+            args.data_path
+        )
+        manifest = load_imagenet100_manifest(manifest_path)
+        class_indices = manifest["class_indices"]
+
+        transform_train, transform_test, level = _build_transforms(
+            args, native_size=IMAGENET_NATIVE_SIZE,
+        )
+        train_base = datasets.ImageFolder(train_dir, transform=transform_train)
+        test_base = datasets.ImageFolder(val_dir, transform=transform_test)
+        if train_base.class_to_idx != test_base.class_to_idx:
+            raise ValueError("Train/val class_to_idx mismatch; check ImageNet folder layout")
+
+        trainset = ClassSubsetDataset(train_base, class_indices)
+        testset = ClassSubsetDataset(test_base, class_indices)
         return _build_loaders(args, trainset, testset, level)
 
     raise ValueError(f"Unknown dataset: {args.dataset}")

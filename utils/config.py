@@ -65,6 +65,12 @@ def get_parser():
     parser.add_argument("--log_interval", type=int, default=50, help="steps between logging/progress updates")
     parser.add_argument("--fp16", action="store_true", help="enable mixed precision training (AMP fp16)")
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
+    parser.add_argument(
+        "--imagenet100_classes_path",
+        type=str,
+        default=None,
+        help="path to ImageNet-100 class manifest JSON (default: {data_path}/imagenet100_resnet50_f1.json)",
+    )
     parser.add_argument("--device_type", type=int, default=None, metavar="N", help="CUDA device index (e.g. 0 or 1). Must be explicitly set via YAML or CLI.")
     parser.add_argument("--no_wandb", action="store_true", help="disable Weights & Biases logging")
     parser.add_argument("--project", type=str, default="exp1", help="W&B project name")
