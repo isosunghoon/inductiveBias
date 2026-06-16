@@ -9,12 +9,16 @@ Usage
     # Override project / checkpoint
     python run_analysis.py --project_path output/exp2 --ckpt_name last.pt
 
+    # Run the same analyses for multiple checkpoints
+    python run_analysis.py --ckpt_names epoch_warmup_end.pt best.pt --analyses hessian_spectrum
+
     # Run only specific analyses (key names defined in ANALYSIS_FNS / ANALYSIS_FNS_PAIR)
     python run_analysis.py --analyses erf
     python run_analysis.py --analyses erf loss_landscape cka
 """
 
 import argparse
+import os
 
 from analysis.pipeline import run_pipeline
 
@@ -33,7 +37,7 @@ from analysis.calc_param import analyze_params
 # CONFIGURATION  (CLI args override project_path and ckpt_name)
 # ---------------------------------------------------------------------------
 
-PROJECT_PATH = "output/model_resized"
+PROJECT_PATH = "output/model_resized_pretrained_vit"
 CKPT_NAME    = "best.pt"
 OUTPUT_ROOT  = "analysis_output"
 
@@ -42,27 +46,27 @@ OUTPUT_ROOT  = "analysis_output"
 # fn signature: (args, model, **kwargs) -> list[AnalysisResult]
 # ---------------------------------------------------------------------------
 ANALYSIS_FNS: dict = {
-    #  "erf":            analyze_erf,
+    # "erf":            analyze_erf,
     # "erf_layers":     analyze_erf_layers,
     # "loss_landscape": analyze_loss_landscape,
-    "params":         analyze_params,
+    # "params":         analyze_params,
     # "dis_occ":      analyze_dis_occ,
-    #"hessian_spectrum": analyze_hessian_spectrum,
+    "hessian_spectrum": analyze_hessian_spectrum,
 }
 
 ANALYSIS_KWARGS = {
     # erf
     "num_images":      500,
-    "anchor_mode":     "custom",
+    "anchor_mode":     "all",
     "num_anchors":     3,
     "distance_metric": "taxi",
-    "average":         True,        # Calculate ERD through accumulating all patch values
+    "average":         True,
     "custom_x_values": [0, 7, 3],
     "custom_y_values": [0, 7, 9],
     # hessian_spectrum
     "batch_size":      16,
     "lanczos_steps":   30,
-    "num_batches":     50,
+    "num_batches":     800,
     # loss_landscape / erf shared
     "ratio":           1,
     "top_n":           5,
@@ -99,6 +103,21 @@ def _parse_cli():
         help=f"Checkpoint filename inside each model dir (default: {CKPT_NAME})",
     )
     parser.add_argument(
+        "--ckpt_names",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Optional list of checkpoint filenames. When provided, analyses are run once per "
+            "checkpoint and saved under checkpoint-specific output folders."
+        ),
+    )
+    parser.add_argument(
+        "--output_root", "-o",
+        default=OUTPUT_ROOT,
+        help=f"Root directory for analysis outputs (default: {OUTPUT_ROOT})",
+    )
+    parser.add_argument(
         "--analyses", "-a",
         nargs="+",
         choices=all_keys,
@@ -112,6 +131,28 @@ def _parse_cli():
     return parser.parse_args()
 
 
+def _ckpt_tag(ckpt_name: str) -> str:
+    tag = ckpt_name.replace(os.sep, "__")
+    return os.path.splitext(tag)[0]
+
+
+def _analysis_output_root(base_output_root: str, analysis_names: list[str], ckpt_name: str) -> str:
+    """
+    Place single-analysis runs under:
+        <output_root>/<analysis_name>/<ckpt_tag>
+    so final files land in:
+        <output_root>/<analysis_name>/<ckpt_tag>/<project_name>/...
+
+    When multiple analyses are requested together, keep the previous layout and
+    only split by checkpoint at the top level:
+        <output_root>/<ckpt_tag>/<analysis_name>/<project_name>/...
+    """
+    ckpt_tag = _ckpt_tag(ckpt_name)
+    if len(analysis_names) == 1:
+        return os.path.join(base_output_root, analysis_names[0], ckpt_tag)
+    return os.path.join(base_output_root, ckpt_tag)
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -119,28 +160,34 @@ def _parse_cli():
 if __name__ == "__main__":
     cli = _parse_cli()
     selected = set(cli.analyses) if cli.analyses else None
+    ckpt_names = cli.ckpt_names or [cli.ckpt_name]
 
     fns_1 = {k: v for k, v in ANALYSIS_FNS.items()
               if selected is None or k in selected}
     fns_2 = {k: v for k, v in ANALYSIS_FNS_PAIR.items()
               if selected is None or k in selected}
+    analysis_names_1 = list(fns_1.keys())
+    analysis_names_2 = list(fns_2.keys())
 
-    if fns_1:
-        run_pipeline(
-            project_path=cli.project_path,
-            analysis_fns=fns_1,
-            ckpt_name=cli.ckpt_name,
-            output_root=OUTPUT_ROOT,
-            n_models=1,
-            **ANALYSIS_KWARGS,
-        )
+    for ckpt_name in ckpt_names:
+        if fns_1:
+            ckpt_output_root = _analysis_output_root(cli.output_root, analysis_names_1, ckpt_name)
+            run_pipeline(
+                project_path=cli.project_path,
+                analysis_fns=fns_1,
+                ckpt_name=ckpt_name,
+                output_root=ckpt_output_root,
+                n_models=1,
+                **ANALYSIS_KWARGS,
+            )
 
-    if fns_2:
-        run_pipeline(
-            project_path=cli.project_path,
-            analysis_fns=fns_2,
-            ckpt_name=cli.ckpt_name,
-            output_root=OUTPUT_ROOT,
-            n_models=2,
-            **ANALYSIS_KWARGS_PAIR,
-        )
+        if fns_2:
+            ckpt_output_root = _analysis_output_root(cli.output_root, analysis_names_2, ckpt_name)
+            run_pipeline(
+                project_path=cli.project_path,
+                analysis_fns=fns_2,
+                ckpt_name=ckpt_name,
+                output_root=ckpt_output_root,
+                n_models=2,
+                **ANALYSIS_KWARGS_PAIR,
+            )

@@ -664,6 +664,7 @@ def _display_name_from_weight_file(path: str) -> str:
         "convformer": "Convformer",
         "convformer_w5": "Convformer w5",
         "convformer_w7": "Convformer w7",
+        "pretrained_vit": "pretrained ViT", 
         #"identity": "Identity",
     }
     return labels.get(stem, stem)

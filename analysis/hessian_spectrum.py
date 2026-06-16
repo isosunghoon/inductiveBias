@@ -9,6 +9,7 @@ the full Hessian matrix.
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 from typing import Iterable
 
 import matplotlib.pyplot as plt
@@ -18,6 +19,27 @@ from tqdm import tqdm
 
 from analysis.pipeline import AnalysisResult
 from utils.dataset import get_dataloader
+
+
+@contextmanager
+def _sdp_math_backend(device: str):
+    """Force MATH SDPA so Hessian-vector products can double-backward through attention."""
+    if not str(device).startswith("cuda") or not torch.backends.cuda.is_built():
+        yield
+        return
+
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+
+        with sdpa_kernel(backends=[SDPBackend.MATH]):
+            yield
+    except (ImportError, AttributeError, TypeError):
+        with torch.backends.cuda.sdp_kernel(
+            enable_flash=False,
+            enable_mem_efficient=False,
+            enable_math=True,
+        ):
+            yield
 
 
 def _trainable_params(model: torch.nn.Module) -> list[torch.nn.Parameter]:
@@ -116,22 +138,80 @@ def _batch_loss(args, model, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         )
 
 
-def _make_density_subplots(ev_pairs: np.ndarray, model_name: str) -> plt.Figure:
+def _trim_percentile(values: np.ndarray, trim_percent: float) -> tuple[np.ndarray, tuple[float, float] | None]:
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return finite, None
+    if trim_percent <= 0.0:
+        return finite, None
+
+    trim_percent = min(trim_percent, 0.49)
+    lo = float(np.quantile(finite, trim_percent))
+    hi = float(np.quantile(finite, 1.0 - trim_percent))
+    trimmed = finite[(finite >= lo) & (finite <= hi)]
+    if trimmed.size == 0:
+        return finite, None
+    return trimmed, (lo, hi)
+
+
+def _make_density_subplots(
+    ev_pairs: np.ndarray,
+    model_name: str,
+    trim_percent: float = 0.10,
+) -> plt.Figure:
     max_ev = ev_pairs[:, 0]
     min_ev = ev_pairs[:, 1]
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.8))
+    trim_pct_label = int(round(trim_percent * 100))
+
     for ax, values, title, color in [
         (axes[0], max_ev, "Max Hessian eigenvalue", "#2563eb"),
         (axes[1], min_ev, "Min Hessian eigenvalue", "#dc2626"),
     ]:
         finite = values[np.isfinite(values)]
+        trimmed, bounds = _trim_percentile(values, trim_percent=trim_percent)
         if finite.size == 0:
             ax.text(0.5, 0.5, "No finite values", ha="center", va="center")
         else:
-            bins = min(40, max(8, int(np.sqrt(finite.size) * 2)))
-            ax.hist(finite, bins=bins, density=True, alpha=0.75, color=color, edgecolor="black", linewidth=0.4)
-            ax.axvline(float(np.mean(finite)), color="black", linestyle="--", linewidth=1.2, label="mean")
+            plot_values = trimmed if trimmed.size else finite
+            bins = min(40, max(8, int(np.sqrt(plot_values.size) * 2)))
+            ax.hist(
+                plot_values,
+                bins=bins,
+                density=True,
+                alpha=0.78,
+                color=color,
+                edgecolor="black",
+                linewidth=0.4,
+            )
+            ax.axvline(float(np.mean(plot_values)), color="black", linestyle="--", linewidth=1.2, label="mean")
+            if bounds is not None:
+                low, high = bounds
+                ax.axvline(low, color=color, linestyle=":", linewidth=1.0, alpha=0.8)
+                ax.axvline(high, color=color, linestyle=":", linewidth=1.0, alpha=0.8)
+                ax.text(
+                    0.02,
+                    0.96,
+                    f"trimmed {trim_pct_label}% tails\nkept {plot_values.size}/{finite.size}",
+                    transform=ax.transAxes,
+                    va="top",
+                    ha="left",
+                    fontsize=9,
+                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+                )
+            else:
+                ax.text(
+                    0.02,
+                    0.96,
+                    f"kept {plot_values.size}/{finite.size}",
+                    transform=ax.transAxes,
+                    va="top",
+                    ha="left",
+                    fontsize=9,
+                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+                )
             ax.legend(frameon=False)
         ax.set_title(title)
         ax.set_xlabel("Eigenvalue")
@@ -149,6 +229,7 @@ def analyze_hessian_spectrum(
     batch_size: int = 16,
     lanczos_steps: int = 30,
     num_batches: int | None = None,
+    trim_percent: float = 0.10,
     **kwargs,
 ) -> list[AnalysisResult]:
     """Estimate minibatch-wise min/max Hessian eigenvalues.
@@ -160,6 +241,7 @@ def analyze_hessian_spectrum(
           ndarray with shape (num_batches, 2), columns [max_ev, min_ev]
         - hessian_spectrum_density.png:
           side-by-side density histograms for max_ev and min_ev
+          after optionally trimming the upper/lower percentile tails.
     """
     del kwargs
 
@@ -192,8 +274,9 @@ def analyze_hessian_spectrum(
         if mixup_fn is not None:
             x, y = mixup_fn(x, y)
 
-        loss = _batch_loss(args, model, x, y)
-        max_ev, min_ev = _lanczos_extreme_eigenvalues(loss, params, steps=lanczos_steps)
+        with _sdp_math_backend(args.device):
+            loss = _batch_loss(args, model, x, y)
+            max_ev, min_ev = _lanczos_extreme_eigenvalues(loss, params, steps=lanczos_steps)
         ev_pairs.append([max_ev, min_ev])
         pbar.set_postfix({"max_ev": f"{max_ev:.3g}", "min_ev": f"{min_ev:.3g}"})
 
@@ -204,7 +287,7 @@ def analyze_hessian_spectrum(
 
     ev_pairs = np.asarray(ev_pairs, dtype=np.float64)
     model_name = str(getattr(args, "output_path", "model")).rstrip("/").split("/")[-1]
-    fig = _make_density_subplots(ev_pairs, model_name)
+    fig = _make_density_subplots(ev_pairs, model_name, trim_percent=trim_percent)
 
     return [
         AnalysisResult("hessian_spectrum_extreme_eigenvalues", ev_pairs, ".npy"),

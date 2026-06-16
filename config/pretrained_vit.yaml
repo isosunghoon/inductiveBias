@@ -9,9 +9,8 @@ pretrained_base_model: vit_base_patch16_224
 norm_type: inception
 
 # ===== Fine-tuning hparams =====
-# 이미 i21k+cifar100 fine-tuned 된 backbone에 GAP head를 새로 얹어 다시 학습.
 # Backbone은 거의 보존하고 head 위주로 적응시키는 작은 LR이 안정적.
-learning_rate: 1.0e-4
+learning_rate: 5.0e-5
 augment: weak
 warmup_epochs: 5
 epochs: 50

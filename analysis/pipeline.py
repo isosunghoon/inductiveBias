@@ -216,7 +216,10 @@ def run_pipeline(
             model = build_model(args, ckpt_name=ckpt_name)
 
             for experiment_name, fn in analysis_fns.items():
-                save_dir = os.path.join(output_root, experiment_name, project_name)
+                if os.path.basename(os.path.normpath(output_root)) == experiment_name:
+                    save_dir = os.path.join(output_root, project_name)
+                else:
+                    save_dir = os.path.join(output_root, experiment_name, project_name)
                 os.makedirs(save_dir, exist_ok=True)
 
                 print(f"[pipeline]    [{experiment_name}] running {fn.__name__} ...", flush=True)
@@ -250,7 +253,10 @@ def run_pipeline(
             model2 = build_model(args2, ckpt_name=ckpt_name)
 
             for experiment_name, fn in analysis_fns.items():
-                save_dir = os.path.join(output_root, experiment_name, project_name)
+                if os.path.basename(os.path.normpath(output_root)) == experiment_name:
+                    save_dir = os.path.join(output_root, project_name)
+                else:
+                    save_dir = os.path.join(output_root, experiment_name, project_name)
                 os.makedirs(save_dir, exist_ok=True)
 
                 print(f"[pipeline]    [{experiment_name}] running {fn.__name__} ...", flush=True)
