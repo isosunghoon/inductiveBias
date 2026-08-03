@@ -1,4 +1,0 @@
-# ===== Identity (no token mixing, MLP-only baseline) =====
-# base.yaml 대비 다른 값만 기재
-model: identity
-

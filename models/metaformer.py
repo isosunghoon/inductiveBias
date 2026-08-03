@@ -1,3 +1,14 @@
+# Adapted from PoolFormer / MetaFormer
+#   https://github.com/sail-sg/poolformer
+#   Copyright 2021 Garena Online Private Limited
+#   Licensed under the Apache License, Version 2.0
+#
+# Yu et al., "MetaFormer is Actually What You Need for Vision", CVPR 2022.
+#
+# Modified here to a single-stage, fixed-resolution architecture with no downsampling,
+# with the MLP module generalized into a swappable channel mixer, so that the token
+# mixer is the only variable across models. See NOTICE for details.
+
 import torch
 import torch.nn as nn
 import models.channel_mixers as CM

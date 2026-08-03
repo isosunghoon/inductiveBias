@@ -1,2 +1,4 @@
+# ===== ViT (report Section 3.2.1) =====
+# Long range dependency + data specific weight. Everything else comes from base.yaml.
 model: vit
 epochs: 1000

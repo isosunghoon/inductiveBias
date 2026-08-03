@@ -1,5 +1,7 @@
-# ===== Local ViT (window attention, window_size=5) =====
-# base.yaml과 거의 동일 — local_vit 전용 파라미터만 추가
+# ===== Local ViT (report Section 3.2.2) =====
+# Data specific weight, no long range dependency: attention masked to a
+# window_size x window_size neighbourhood. window_size=3 is the reported setting
+# (Table A1); run.sh also sweeps 5 and 7.
 model: localvit
 
 window_size: 3

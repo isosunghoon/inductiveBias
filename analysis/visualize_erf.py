@@ -17,7 +17,8 @@ def display_name_from_erf_layers_file(path: str) -> str:
         "localvit": "local ViT",
         "localvit_w5": "local ViT w5",
         "localvit_w7": "local ViT w7",
-        "denseformer": "MLP mixer",
+        "mlpmixer": "MLP mixer",
+        "denseformer": "MLP mixer",  # legacy run name for mlpmixer
         "convformer": "Convformer",
         "convformer_w5": "Convformer w5",
         "convformer_w7": "Convformer w7",

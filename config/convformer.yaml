@@ -1,4 +1,7 @@
-# ===== token mixer =====
+# ===== Convformer (report Section 3.2.4) =====
+# Neither long range dependency nor data specific weight.
+# conv_groups == embed_dim makes the convolution depthwise, so the token mixer only
+# mixes tokens and never channels.
 model: convformer
 kernel_size: 3
 norm_layer: batchnorm

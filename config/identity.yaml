@@ -1,4 +1,4 @@
-# ===== Identity (no token mixing, MLP-only baseline) =====
-# base.yaml 대비 다른 값만 기재
+# ===== Identity baseline (report Section 4.2) =====
+# Token mixer replaced by the identity function, i.e. no token mixing at all.
+# Isolates how much of the accuracy comes from the channel mixer alone.
 model: identity
-

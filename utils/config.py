@@ -73,6 +73,9 @@ def get_parser():
     )
     parser.add_argument("--device_type", type=int, default=None, metavar="N", help="CUDA device index (e.g. 0 or 1). Must be explicitly set via YAML or CLI.")
     parser.add_argument("--no_wandb", action="store_true", help="disable Weights & Biases logging")
+    parser.add_argument("--wandb_entity", type=str, default="snu-inductive-bias",
+                        help="W&B entity (team or user). Set to your own entity, or pass "
+                             "--no_wandb to train without logging.")
     parser.add_argument("--project", type=str, default="exp1", help="W&B project name")
     parser.add_argument("--run_name", type=str, default="XXXXX", help="W&B run name")    
 
@@ -88,19 +91,18 @@ def get_parser():
     parser.add_argument("--expansion_factor", type=int, default=2, help="hidden dimension expansion rate")
     parser.add_argument("--mixer_drop", type=float, default=0.5, help="mlp mixer layer drop rate")
 
-    # PoolFormer
-    parser.add_argument("--pool_size", type=int, default=3, help="pooling size for PoolFormer")
-    parser.add_argument("--stride", type=int, default=1, help="stride for PoolFormer")
-
     # ConvFormer
+    parser.add_argument("--stride", type=int, default=1, help="stride for the ConvFormer convolution")
     parser.add_argument("--kernel_size", type=int, default=3, help="kernel size for ConvFormer depthwise convolution")
     parser.add_argument("--conv_groups", type=int, default=192, help="number of channel groups for ConvFormer grouped convolution")
 
-    # ResNet
-    parser.add_argument("--resnet_block", type=str, default="basic", help="resnet block type")
-    parser.add_argument("--resnet_stem_channels", type=int, default=64, help="stem output channels for ResNet")
-    parser.add_argument("--resnet_base_channels", type=int, default=64, help="base stage width for ResNet")
-    parser.add_argument("--resnet_zero_init_residual", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=False, help="zero-init the last BN in each residual branch")
+    # Archived experiments — not used by the reported runs. These stay registered so the
+    # configs under experimental/config/ still parse; see experimental/README.md.
+    parser.add_argument("--pool_size", type=int, default=3, help="[experimental] pooling size for PoolFormer")
+    parser.add_argument("--resnet_block", type=str, default="basic", help="[experimental] resnet block type")
+    parser.add_argument("--resnet_stem_channels", type=int, default=64, help="[experimental] stem output channels for ResNet")
+    parser.add_argument("--resnet_base_channels", type=int, default=64, help="[experimental] base stage width for ResNet")
+    parser.add_argument("--resnet_zero_init_residual", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=False, help="[experimental] zero-init the last BN in each residual branch")
 
     # Pretrained ViT (Google JAX .npz)
     parser.add_argument("--pretrained_npz", type=str, default=None, help="path to Google JAX .npz checkpoint for pretrained ViT")
@@ -108,6 +110,14 @@ def get_parser():
     return parser
 
     
+# Model names that were used while running the experiments, mapped to the names used in
+# the report. Checkpoints saved before the rename carry the old name in their config.yaml,
+# so keep resolving them rather than breaking the analysis pipeline on existing runs.
+_LEGACY_MODEL_ALIASES = {
+    "denseformer": "mlpmixer",
+}
+
+
 def _apply_yaml(args, path):
     """Load a yaml file and apply its values onto args. Raises on unknown keys."""
     assert os.path.exists(path), f"Config not found: {path}"
@@ -151,6 +161,12 @@ def parse_args(argv=None):
     # Re-parse real CLI (or provided argv) last so it has highest priority.
     parser.set_defaults(**vars(defaults))
     args = parser.parse_args(argv)
+
+    if args.model in _LEGACY_MODEL_ALIASES:
+        new_name = _LEGACY_MODEL_ALIASES[args.model]
+        print(f"[config] model '{args.model}' was renamed to '{new_name}'; using '{new_name}'.")
+        args.model = new_name
+
     if args.device_type is None:
         raise ValueError(
             "'device_type' must be set explicitly (YAML: device_type: 0 or CLI: --device_type 1). "

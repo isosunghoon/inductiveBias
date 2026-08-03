@@ -1,0 +1,86 @@
+Inductive Bias in Vision Models via the MetaFormer Framework
+Copyright 2026 Sunghoon Kim, Yunwoo Koo, Minseop Lee
+
+This product includes software developed as part of the Seoul National University
+2026-1 Student-Directed Research Program.
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the full text.
+
+================================================================================
+Third-party code included in this repository
+================================================================================
+
+The project is released under Apache-2.0 because parts of it are adapted from
+Apache-2.0 licensed work. Each file below keeps its original license; the notices
+here are in addition to, not in place of, the headers in those files.
+
+--------------------------------------------------------------------------------
+models/metaformer.py
+--------------------------------------------------------------------------------
+Adapted from PoolFormer / MetaFormer
+    https://github.com/sail-sg/poolformer
+    Copyright 2021 Garena Online Private Limited
+    Licensed under the Apache License, Version 2.0
+
+Yu et al., "MetaFormer is Actually What You Need for Vision", CVPR 2022.
+
+Changes: the block/patch-embedding/position-embedding scaffolding is reused, but
+the multi-stage hierarchy with downsampling is replaced by a single stage at fixed
+resolution, the MLP module is generalized into a swappable channel mixer, and the
+model is parameterized over token mixers.
+
+The DropPath (stochastic depth) implementation follows the standard formulation
+also used by timm (Copyright 2019 Ross Wightman, Apache-2.0).
+
+--------------------------------------------------------------------------------
+analysis/erf.py
+--------------------------------------------------------------------------------
+Adapted from RepLKNet-pytorch
+    https://github.com/DingXiaoH/RepLKNet-pytorch
+    Licensed under the MIT License
+
+Ding et al., "Scaling Up Your Kernels to 31x31: Revisiting Large Kernel Design in
+CNNs", CVPR 2022.
+
+Changes: the effective-receptive-field measurement is extended to MetaFormer-style
+[B, C, H, W] models and to arbitrary anchor patches, and the Effective Receptive
+Distance (ERD) metric proposed in this work is built on top of it.
+
+--------------------------------------------------------------------------------
+experimental/models/sam.py
+--------------------------------------------------------------------------------
+Adapted from davda54/sam
+    https://github.com/davda54/sam
+    Copyright (c) 2020 David Samuel
+    Licensed under the MIT License
+
+Foret et al., "Sharpness-Aware Minimization for Efficiently Improving
+Generalization", ICLR 2021.
+
+================================================================================
+Runtime dependencies
+================================================================================
+
+Not redistributed here; installed from PyPI via requirements.txt.
+
+    PyTorch, torchvision      BSD-3-Clause
+    timm                      Apache-2.0
+    PyHessian                 MIT
+    Weights & Biases          MIT
+    NumPy, matplotlib         BSD-3-Clause / matplotlib license
+
+================================================================================
+Datasets and pretrained weights
+================================================================================
+
+Not redistributed here; downloaded at runtime by utils/dataset.py.
+
+    CIFAR-100        Krizhevsky, 2009. Research use.
+    Tiny ImageNet    Le and Yang, CS231N, Stanford University, 2015.
+    ImageNet-1k      Russakovsky et al., 2015. Subject to the ImageNet terms of
+                     access; non-commercial research and educational use only.
+                     Used only by the experimental ImageNet-100 subset.
+
+    Pretrained ViT-B/16 (AugReg, ImageNet-21k) checkpoints come from
+    google-research/vision_transformer, Apache-2.0.
+    Steiner et al., "How to train your ViT?", TMLR 2022.

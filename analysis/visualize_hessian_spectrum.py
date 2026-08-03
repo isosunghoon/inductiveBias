@@ -26,7 +26,8 @@ def _pretty_model_label(model_name: str) -> str:
     label_map = {
         'localvit': 'local ViT',
         'convformer': 'Convformer',
-        'denseformer': 'MLP mixer',
+        'mlpmixer': 'MLP mixer',
+        'denseformer': 'MLP mixer',  # legacy run name for mlpmixer
         'vit': 'ViT',
         'pretrained_vit': 'pretrained ViT',
     }

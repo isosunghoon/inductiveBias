@@ -1,4 +1,0 @@
-# ===== token mixer =====
-model: poolformer
-pool_size: 3
-stride: 1 # parameters for the poolformer

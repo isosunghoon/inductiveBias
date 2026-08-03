@@ -447,7 +447,7 @@ def load_imagenet100_manifest(path: str | Path) -> dict:
     if not path.is_file():
         raise FileNotFoundError(
             f"ImageNet-100 class manifest not found: {path}\n"
-            "Run `python select_imagenet100_classes.py --data_path <imagenet_root>` first."
+            "Run `python experimental/select_imagenet100_classes.py --data_path <imagenet_root>` first."
         )
     with open(path, encoding="utf-8") as f:
         manifest = json.load(f)

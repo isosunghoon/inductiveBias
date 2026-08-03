@@ -1,5 +1,0 @@
-# ===== token mixer =====
-model: convformer
-kernel_size: 3
-stride: 1
-conv_groups: 192

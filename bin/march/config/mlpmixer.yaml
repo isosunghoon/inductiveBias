@@ -1,4 +1,0 @@
-# ===== token mixer =====
-model: mlpmixer
-expansion_factor: 2 # parameters for the MLPMixer
-mixer_drop: 0.5

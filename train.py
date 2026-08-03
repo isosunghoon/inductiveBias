@@ -8,9 +8,7 @@ from models.metaformer import MetaFormer
 import models.token_mixers as TM
 import models.channel_mixers as CM
 import models.norm_layers as NL
-import models.resnet as RN
 import models.pretrained_vit as PV
-from models.sam import SAM
 
 from utils.config import parse_args, resolve_runtime_device
 from utils.dataset import get_dataloader
@@ -59,29 +57,26 @@ def setup(args):
         if args.act_layer == 'GELU':
             args.act_layer = nn.GELU
 
+        # Token mixers. The four reported mixers plus the identity (no-mixing) baseline;
+        # see README for the report-name <-> CLI-name mapping.
         if args.model == "identity":
             args.token_mixer = nn.Identity
         elif args.model == "vit":
             args.token_mixer = partial(TM.Attention, head_dim=args.attn_head_dim, qkv_bias=args.attn_qkv_bias,
                                 attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
         elif args.model == "localvit":
-            args.token_mixer = partial(TM.ConvAttention, head_dim=args.attn_head_dim, window_size=args.window_size, 
+            args.token_mixer = partial(TM.ConvAttention, head_dim=args.attn_head_dim, window_size=args.window_size,
                                 qkv_bias=args.attn_qkv_bias, attn_drop=args.attn_drop, proj_drop=args.attn_proj_drop,)
         elif args.model == "mlpmixer":
             args.token_mixer = partial(TM.MLPMixer, img_size=args.img_size, patch_size=args.patch_size,
-                                        expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)                               
-        elif args.model == "poolformer":
-            args.token_mixer = partial(TM.PoolFormer, pool_size=args.pool_size, stride=args.stride)
+                                        expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)
         elif args.model == "convformer":
             args.token_mixer = partial(TM.ConvFormer, kernel_size=args.kernel_size, stride=args.stride, groups=args.conv_groups)
-        elif args.model == "convformer2":
-            args.token_mixer = TM.ConvFormer2
-        elif args.model == "denseformer":
-            args.token_mixer = partial(TM.DenseFormer, img_size=args.img_size, patch_size=args.patch_size,
-                                        expansion_factor=args.expansion_factor, mixer_drop=args.mixer_drop,)    
-        elif args.model == "resmlp":
-            args.token_mixer = partial(TM.ResMLP, img_size=args.img_size, patch_size=args.patch_size,
-                                        expansion_factor=args.expansion_factor)
+        else:
+            raise ValueError(
+                f"Unsupported MetaFormer token mixer: {args.model!r}. "
+                f"Choose one of: identity, vit, localvit, mlpmixer, convformer."
+            )
 
         # Channel Mixers
         if args.channel_mixer == "mlp":
@@ -95,9 +90,9 @@ def setup(args):
                     img_size=args.img_size, add_pos_emb=args.add_pos_emb, drop_path_rate=args.drop_path,
                     use_layer_scale=args.use_layer_scale, layer_scale_init_value=args.layer_scale_init_value)
     else:
-        if args.model =='resnet18':
-            model = RN.build_resnet(args)
-        elif args.model == 'pretrained_vit':
+        # The only non-MetaFormer model in the report is the pretrained ViT reference
+        # model. The ResNet baseline lives in experimental/models/resnet.py.
+        if args.model == 'pretrained_vit':
             model = PV.build_pretrained_vit(args)
         else:
             raise ValueError(f"Unsupported non-MetaFormer model: {args.model}")
@@ -110,17 +105,14 @@ def train(args, model, run=None):
     train_loader, test_loader, mixup_fn = get_dataloader(args)
 
     # prepare optimizer & scheduler
+    # The reported runs use AdamW; SGD is kept for the ResNet-style baselines.
+    # The SAM optimizer was explored but is not part of the report — see experimental/.
     if args.optimizer == "sgd":
         optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
     elif args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay,)
-    elif args.optimizer == "sam":
-        base_optimizer = torch.optim.AdamW
-        optimizer = SAM(model.parameters(), base_optimizer, lr=args.learning_rate, weight_decay=args.weight_decay,)
-        # SAM은 두 번의 forward/backward를 사용하므로 GradScaler/AMP와 함께 쓰면 unscale_ 호출이 복잡해진다.
-        # 구현 단순성과 안정성을 위해 SAM을 쓸 때는 항상 fp32로 학습하도록 강제한다.
-        args.fp16 = False
-    use_sam = isinstance(optimizer, SAM)
+    else:
+        raise ValueError(f"Unsupported optimizer: {args.optimizer!r}. Choose 'adamw' or 'sgd'.")
 
     if args.decay_type == "cosine":
         warmup_scheduler = LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=args.warmup_epochs)
@@ -160,31 +152,18 @@ def train(args, model, run=None):
             running_loss += loss.detach()
             global_step += 1
 
-            if use_sam:
-                # SAM: 두 번의 forward-backward 패스, batchnorm 사용하는 경우에는 enable_running_stats/disable_running stats 사용 필요
+            if args.fp16:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.first_step(zero_grad=True)
+                optimizer.step()
 
-                logits2 = model(x)
-                loss2 = torch.nn.functional.cross_entropy(logits2, y, label_smoothing=args.label_smoothing)
-                loss2.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.second_step(zero_grad=True)
-            else:
-                # 일반 옵티마이저 경로 (SGD / AdamW)
-                if args.fp16:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                    optimizer.step()
-
-                optimizer.zero_grad()
+            optimizer.zero_grad()
 
             if step % args.log_interval == 0:
                 avg_loss = (running_loss / (step + 1)).item()
@@ -292,7 +271,7 @@ def main():
         train(args, model, run=None)
     else:
         wandb_config = build_wandb_config(args)
-        with wandb.init(entity="snu-inductive-bias", project=args.project, name=run_name, config=wandb_config,) as run:
+        with wandb.init(entity=args.wandb_entity, project=args.project, name=run_name, config=wandb_config,) as run:
             model = setup(args)
             train(args, model, run=run)
 

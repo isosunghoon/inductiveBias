@@ -11,9 +11,12 @@ from torch import nn
 _MODEL_DISPLAY_NAMES = {
     "convformer": "Convformer",
     "localvit": "local ViT",
-    "denseformer": "MLP mixer",
+    "mlpmixer": "MLP mixer",
     "vit": "ViT",
     "pretrained_vit": "Pretrained ViT",
+    "identity": "Identity",
+    # legacy name for mlpmixer, kept so runs saved before the rename still plot
+    "denseformer": "MLP mixer",
 }
 
 
