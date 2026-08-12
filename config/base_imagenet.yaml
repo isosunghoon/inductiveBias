@@ -1,0 +1,70 @@
+# ===== Base config for ImageNet-1k =====
+# Launch with torchrun (see run_imagenet.sh); device_type then comes from LOCAL_RANK.
+#
+# Data is NOT downloaded: the image-net.org archives need an account, so stage
+# {data_path}/imagenet/{train,val}/<wnid>/*.JPEG yourself (see utils/dataset.py).
+
+seed: 67
+dataset: imagenet
+norm_type: imagenet
+crop_style: imagenet     # RandomResizedCrop / Resize+CenterCrop (필수: 원본 해상도가 제각각)
+download: false
+is_metaformer: true
+
+# ===== Channel mixer =====
+channel_mixer: mlp
+
+# ===== Token mixer =====
+attn_head_dim: 64
+attn_qkv_bias: true
+attn_drop: 0.0
+attn_proj_drop: 0.0
+
+# ===== Model =====
+# CIFAR-100 / Tiny ImageNet 실험과 동일한 형태 (224/16 → 14x14 토큰, DeiT-Tiny 급).
+img_size: 224
+patch_size: 16
+embed_dim: 192
+depth: 12
+mlp_ratio: 4.0
+norm_layer: layernorm
+act_layer: GELU
+
+drop_rate: 0.0
+drop_path: 0.1
+add_pos_emb: true
+use_layer_scale: false
+layer_scale_init_value: 1e-5
+
+# ===== Training =====
+# train_batch_size는 GPU 1장당 배치다. GPU 8장 => global batch 1024.
+# learning_rate는 DeiT의 5e-4 x (global batch / 512) 규칙을 따른 값이므로,
+# GPU 수나 배치를 바꾸면 같이 조정할 것.
+epochs: 300
+train_batch_size: 128
+test_batch_size: 256
+
+optimizer: adamw
+learning_rate: 1.0e-3
+weight_decay: 0.05
+decay_type: cosine
+warmup_epochs: 20
+max_grad_norm: 5.0
+label_smoothing: 0.1
+augment: strong
+
+# ===== Validation / checkpointing =====
+eval_interval: 5
+train_eval_ratio: 0.02   # train acc는 학습셋 2%로 추정 (전체 1회 통과는 한 에폭치 비용)
+save_best: true
+ckpt_interval: 25
+
+# ===== Etc =====
+num_classes: 1000
+num_workers: 12          # JPEG 디코딩이 병목 — 노드 vCPU / GPU 수에 맞춰 올릴 것
+log_interval: 50
+fp16: true
+amp_dtype: bfloat16      # 300에폭짜리 장기 학습에서 GradScaler 없이 안정적
+data_path: ./data
+no_wandb: false
+project: imagenet

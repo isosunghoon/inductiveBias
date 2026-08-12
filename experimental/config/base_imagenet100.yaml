@@ -4,6 +4,8 @@
 seed: 67
 dataset: imagenet-100
 norm_type: imagenet
+crop_style: imagenet     # RandomResizedCrop / Resize+CenterCrop (원본 해상도가 제각각이라 필수)
+download: false          # image-net.org는 더 이상 익명 다운로드를 허용하지 않음 — 직접 배치할 것
 is_metaformer: true
 
 # ===== Channel mixer =====

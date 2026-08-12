@@ -53,18 +53,51 @@ def get_parser():
     parser.add_argument("--norm_type", type=str, default="cifar100",
                         choices=["cifar100", "imagenet", "inception"],
                         help="input normalization scheme: cifar100 | imagenet | inception (mean=std=0.5, used by Google JAX ViT .npz checkpoints)")
+    parser.add_argument("--crop_style", type=str, default="auto",
+                        choices=["auto", "cifar", "imagenet"],
+                        help="train/test crop policy. cifar: Resize + RandomCrop(padding=4) (small, fixed-size "
+                             "source images). imagenet: RandomResizedCrop for train and Resize + CenterCrop for "
+                             "test (variable-size source JPEGs; also provides scale augmentation). "
+                             "auto: imagenet for the imagenet/imagenet-100 datasets, cifar otherwise.")
+    parser.add_argument("--test_crop_ratio", type=float, default=0.875,
+                        help="[crop_style=imagenet] center-crop ratio at test time: images are resized to "
+                             "img_size / test_crop_ratio before the center crop")
 
     # validation 관련
     parser.add_argument("--eval_interval", type=int, default=5, help="run validation every N epochs")
     parser.add_argument("--save_best", action="store_true", help="save best model by val acc")
     parser.add_argument("--output_path", type=str, default="./output", help="output path")
+    parser.add_argument("--train_eval_ratio", type=float, default=1.0,
+                        help="fraction of the training set used to report train accuracy. 1.0 evaluates the "
+                             "whole training set (fine for CIFAR-100, an extra full pass on ImageNet); use "
+                             "e.g. 0.02 on large datasets.")
+
+    # checkpointing / resume
+    parser.add_argument("--ckpt_interval", type=int, default=100,
+                        help="save a numbered weight checkpoint (epoch_N.pt) every N epochs")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="path to a last.pt training-state checkpoint to resume from, or 'auto' to pick the "
+                             "newest last.pt under output/{project}/{run_name}-* (for requeued cluster jobs)")
 
     # 기타
     parser.add_argument("--num_classes", type=int, default=100, help="number of classes")
     parser.add_argument("--num_workers", type=int, default=4, help="number of data loading workers")
     parser.add_argument("--log_interval", type=int, default=50, help="steps between logging/progress updates")
-    parser.add_argument("--fp16", action="store_true", help="enable mixed precision training (AMP fp16)")
+    # `--fp16` (값 없이) 는 그대로 True. `--fp16 false` 로 YAML 설정을 CLI에서 끌 수도 있다.
+    parser.add_argument("--fp16", type=lambda x: str(x).lower() in ("true", "1", "yes"),
+                        nargs="?", const=True, default=False,
+                        help="enable mixed precision training (AMP)")
+    parser.add_argument("--amp_dtype", type=str, default="float16", choices=["float16", "bfloat16"],
+                        help="autocast dtype when --fp16 is set. bfloat16 needs no GradScaler and is the safer "
+                             "choice for long runs on Ampere or newer.")
+    parser.add_argument("--compile", type=lambda x: str(x).lower() in ("true", "1", "yes"),
+                        nargs="?", const=True, default=True,
+                        help="wrap the model in torch.compile (--compile false to debug or on CPU)")
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
+    parser.add_argument("--download", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=True,
+                        help="allow the dataset loader to download/extract the dataset when it is missing. "
+                             "ImageNet-1k can no longer be fetched anonymously from image-net.org, so stage it "
+                             "yourself and run with --download false.")
     parser.add_argument(
         "--imagenet100_classes_path",
         type=str,
@@ -167,10 +200,15 @@ def parse_args(argv=None):
         print(f"[config] model '{args.model}' was renamed to '{new_name}'; using '{new_name}'.")
         args.model = new_name
 
-    if args.device_type is None:
+    # Under torchrun the GPU is assigned by the launcher, so LOCAL_RANK always wins over a
+    # device_type coming from YAML or CLI (which would otherwise put every rank on GPU 0).
+    local_rank = os.environ.get("LOCAL_RANK")
+    if local_rank is not None:
+        args.device_type = int(local_rank)
+    elif args.device_type is None:
         raise ValueError(
             "'device_type' must be set explicitly (YAML: device_type: 0 or CLI: --device_type 1). "
-            "This is required even when running on CPU."
+            "This is required even when running on CPU. Under `torchrun` it is taken from LOCAL_RANK."
         )
     return args
 

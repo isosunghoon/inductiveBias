@@ -11,13 +11,18 @@ from train import setup, set_seed
 
 def _normalize_state_dict(state_dict):
     """
-    체크포인트가 torch.compile()로 저장된 경우 키에 '_orig_mod.' 접두사가 붙어 있어
-    현재 모델(state_dict)과 맞지 않을 수 있음. 접두사를 제거한 state_dict를 반환.
+    체크포인트가 torch.compile()('_orig_mod.') 또는 DDP('module.')로 감싼 모델에서
+    저장된 경우 키에 접두사가 붙어 현재 모델과 맞지 않을 수 있음.
+    접두사를 모두 제거한 state_dict를 반환.
     """
-    prefix = "_orig_mod."
-    if not any(k.startswith(prefix) for k in state_dict):
-        return state_dict
-    return {k.removeprefix(prefix): v for k, v in state_dict.items()}
+    stripped = True
+    while stripped:
+        stripped = False
+        for prefix in ("_orig_mod.", "module."):
+            if any(k.startswith(prefix) for k in state_dict):
+                state_dict = {k.removeprefix(prefix): v for k, v in state_dict.items()}
+                stripped = True
+    return state_dict
 
 
 def load_checkpoint(model, ckpt_path, device):

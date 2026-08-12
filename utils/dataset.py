@@ -9,7 +9,9 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from torchvision import transforms, datasets
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, DistributedSampler, Subset
+
+from utils.distributed import get_rank, get_world_size, is_distributed, main_process_first
 
 
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
@@ -50,20 +52,37 @@ class RASampler(torch.utils.data.Sampler):
     인덱스 순서: 셔플 후 [i0,i0,i0, i1,i1,i1, ...] (num_repeats=3)
     → 배치 내 연속된 num_repeats개가 같은 이미지, 각각 다른 랜덤 증강 적용.
 
+    분산 학습(DDP)에서는 모든 rank가 동일한 전역 순서를 만든 뒤 자기 몫만 잘라 쓴다.
+    반복본이 순서상 인접하므로, 연속 구간을 잘라도 같은 배치 안에 반복본이 유지된다.
+    셔플 순서는 (seed + epoch)로 결정되므로 에폭마다 set_epoch()를 호출해야 한다.
+
     Reference: https://github.com/facebookresearch/deit/blob/main/samplers.py
     """
 
-    def __init__(self, dataset, num_repeats: int, shuffle: bool = True, batch_size: int = 256):
+    def __init__(self, dataset, num_repeats: int, shuffle: bool = True, batch_size: int = 256,
+                 num_replicas: int | None = None, rank: int | None = None, seed: int = 0):
         self.n = len(dataset)
         self.num_repeats = num_repeats
         self.shuffle = shuffle
         self.batch_size = batch_size
+        self.num_replicas = get_world_size() if num_replicas is None else num_replicas
+        self.rank = get_rank() if rank is None else rank
+        self.seed = seed
+        self.epoch = 0
         # 에폭 길이를 데이터셋 크기(N)와 동일하게 유지하여 학습 시간 관리
-        self.num_selected_samples = self.n
+        # (분산 시 rank당 N / world_size)
+        self.total_size = self.n
+        self.num_selected_samples = self.n // self.num_replicas
+
+    def set_epoch(self, epoch: int):
+        self.epoch = epoch
 
     def __iter__(self):
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + self.epoch)
+
         if self.shuffle:
-            base_indices = torch.randperm(self.n).tolist()
+            base_indices = torch.randperm(self.n, generator=generator).tolist()
         else:
             base_indices = list(range(self.n))
 
@@ -78,13 +97,14 @@ class RASampler(torch.utils.data.Sampler):
             if ptr >= self.n:
                 ptr = 0
                 if self.shuffle:
-                    random.shuffle(base_indices)
+                    order = torch.randperm(self.n, generator=generator).tolist()
+                    base_indices[:] = [base_indices[i] for i in order]
             idx = base_indices[ptr]
             ptr += 1
             return idx
 
-        while len(out) < self.num_selected_samples:
-            remaining = self.num_selected_samples - len(out)
+        while len(out) < self.total_size:
+            remaining = self.total_size - len(out)
             cur_bs = min(self.batch_size, remaining)
             
             full_groups = cur_bs // self.num_repeats
@@ -103,10 +123,40 @@ class RASampler(torch.utils.data.Sampler):
 
             out.extend(batch)
 
-        return iter(out[:self.num_selected_samples])
+        out = out[:self.total_size]
+        start = self.rank * self.num_selected_samples
+        return iter(out[start:start + self.num_selected_samples])
 
     def __len__(self) -> int:
         return self.num_selected_samples
+
+
+class UnpaddedDistributedSampler(torch.utils.data.Sampler):
+    """
+    Evaluation sampler: splits the dataset into contiguous, non-overlapping rank shards.
+
+    Unlike torch's DistributedSampler it never pads the last shard, so no sample is
+    counted twice and the reduced accuracy is exact. Ranks may therefore see a different
+    number of batches — which is fine because evaluation runs no collectives inside the
+    loop, only a single reduction over the (correct, total) counts at the end.
+    """
+
+    def __init__(self, dataset, num_replicas: int | None = None, rank: int | None = None):
+        self.n = len(dataset)
+        self.num_replicas = get_world_size() if num_replicas is None else num_replicas
+        self.rank = get_rank() if rank is None else rank
+
+        per_rank = self.n // self.num_replicas
+        remainder = self.n % self.num_replicas
+        # 앞쪽 rank들이 나머지를 하나씩 더 가져간다
+        self.start = self.rank * per_rank + min(self.rank, remainder)
+        self.length = per_rank + (1 if self.rank < remainder else 0)
+
+    def __iter__(self):
+        return iter(range(self.start, self.start + self.length))
+
+    def __len__(self) -> int:
+        return self.length
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +440,35 @@ def _prepare_imagenet_val(val_dir: Path):
                 src.rename(val_dir / synset / fname)
 
 
+_IMAGENET_MISSING_MSG = """\
+ImageNet-1k {split} split not found or not in ImageFolder layout under {path}.
+
+The image-net.org archives are no longer downloadable anonymously, so --download true
+will not help here. Stage the data yourself, e.g.
+
+  huggingface-cli download ILSVRC/imagenet-1k --repo-type dataset --local-dir <dir>
+  # (gated: accept the terms on the dataset page and `huggingface-cli login` first)
+
+and unpack it so that it looks like
+
+  {root}/train/<wnid>/*.JPEG
+  {root}/val/<wnid>/*.JPEG
+
+If you already have the original tars, drop them in {root}/archives/ and this loader will
+extract and organize them (val images are sorted into wnid folders with valprep.sh)."""
+
+
+def _try_download(url: str, dest: Path):
+    """
+    Best-effort download: image-net.org now refuses anonymous requests, so a failure here
+    is expected. Report it and let the caller fall through to the staging instructions.
+    """
+    try:
+        _download_file(url, dest)
+    except Exception as exc:  # URLError / HTTPError / socket timeouts
+        print(f"[download] failed for {url}: {exc}")
+
+
 def prepare_imagenet(
     data_path: str,
     *,
@@ -397,37 +476,46 @@ def prepare_imagenet(
     download_val: bool = True,
 ) -> Path:
     """
-    Download and prepare ImageNet-1K into ImageFolder layout.
+    Prepare ImageNet-1K into ImageFolder layout, downloading only if allowed.
 
     Expected result under {data_path}/imagenet/:
       train/<wnid>/*.JPEG
       val/<wnid>/*.JPEG
 
-    Archives are cached under {data_path}/imagenet/archives/.
+    Archives are cached under {data_path}/imagenet/archives/. A cached tar is extracted
+    even when downloading is disabled, so a hand-staged tar is enough.
     """
     root = imagenet_root(data_path)
     archives = root / "archives"
     train_dir = root / "train"
     val_dir = root / "val"
 
-    if download_train and not _imagenet_train_prepared(train_dir):
+    if not _imagenet_train_prepared(train_dir):
         train_tar = archives / "ILSVRC2012_img_train.tar"
-        _download_file(IMAGENET_TRAIN_URL, train_tar)
-        train_dir.mkdir(parents=True, exist_ok=True)
-        _extract_tar(train_tar, train_dir)
-        _prepare_imagenet_train(train_dir)
+        if download_train and not train_tar.is_file():
+            _try_download(IMAGENET_TRAIN_URL, train_tar)
+        if train_tar.is_file():
+            train_dir.mkdir(parents=True, exist_ok=True)
+            _extract_tar(train_tar, train_dir)
+            _prepare_imagenet_train(train_dir)
+        else:
+            # 이미 풀려 있으나 class별 tar만 남아 있는 경우도 처리
+            _prepare_imagenet_train(train_dir)
 
-    if download_val and not _imagenet_val_prepared(val_dir):
+    if not _imagenet_val_prepared(val_dir):
         val_tar = archives / "ILSVRC2012_img_val.tar"
-        _download_file(IMAGENET_VAL_URL, val_tar)
-        val_dir.mkdir(parents=True, exist_ok=True)
-        _extract_tar(val_tar, val_dir)
-        _prepare_imagenet_val(val_dir)
+        if download_val and not val_tar.is_file():
+            _try_download(IMAGENET_VAL_URL, val_tar)
+        if val_tar.is_file():
+            val_dir.mkdir(parents=True, exist_ok=True)
+            _extract_tar(val_tar, val_dir)
+        if val_dir.is_dir() and any(val_dir.glob("ILSVRC2012_val_*.JPEG")):
+            _prepare_imagenet_val(val_dir)
 
-    if download_train and not _imagenet_train_prepared(train_dir):
-        raise RuntimeError(f"Failed to prepare ImageNet train split under {train_dir}")
-    if download_val and not _imagenet_val_prepared(val_dir):
-        raise RuntimeError(f"Failed to prepare ImageNet val split under {val_dir}")
+    if not _imagenet_train_prepared(train_dir):
+        raise FileNotFoundError(_IMAGENET_MISSING_MSG.format(split="train", path=train_dir, root=root))
+    if not _imagenet_val_prepared(val_dir):
+        raise FileNotFoundError(_IMAGENET_MISSING_MSG.format(split="val", path=val_dir, root=root))
 
     return root
 
@@ -485,22 +573,61 @@ class ClassSubsetDataset(Dataset):
         return image, self.class_to_new[target]
 
 
+def _resolve_crop_style(args, native_size: int) -> str:
+    """cifar | imagenet — see --crop_style. 'auto' keys off the dataset's native size."""
+    style = getattr(args, "crop_style", "auto")
+    if style != "auto":
+        return style
+    return "imagenet" if native_size >= IMAGENET_NATIVE_SIZE else "cifar"
+
+
+def _imagenet_geometry(args, level: str):
+    """
+    Standard ImageNet geometry: RandomResizedCrop for train, Resize + CenterCrop for test.
+
+    Required, not merely preferable, on full-size ImageNet: the source JPEGs have varying
+    resolutions, so the test pipeline must produce a fixed shape before batching, and a
+    fixed-size RandomCrop would cut a 224px window out of a full-resolution image instead
+    of providing scale augmentation (and would fail outright on images below 224px).
+    """
+    bicubic = transforms.InterpolationMode.BICUBIC
+    resize_size = int(round(args.img_size / getattr(args, "test_crop_ratio", 0.875)))
+
+    test_transforms = [
+        transforms.Resize(resize_size, interpolation=bicubic),
+        transforms.CenterCrop(args.img_size),
+    ]
+
+    if level in ("weak", "strong"):
+        train_transforms = [
+            transforms.RandomResizedCrop(args.img_size, scale=(0.08, 1.0), interpolation=bicubic),
+            transforms.RandomHorizontalFlip(),
+        ]
+    else:
+        train_transforms = list(test_transforms)
+
+    return train_transforms, test_transforms
+
+
 def _build_transforms(args, native_size: int):
     level = getattr(args, "augment", "none")  # 'none' | 'weak' | 'strong'
     norm_mean, norm_std = NORM_TABLE[getattr(args, "norm_type", "cifar100")]
 
-    train_transforms = []
-    test_transforms = []
+    if _resolve_crop_style(args, native_size) == "imagenet":
+        train_transforms, test_transforms = _imagenet_geometry(args, level)
+    else:
+        train_transforms = []
+        test_transforms = []
 
-    if args.img_size != native_size:
-        train_transforms.append(transforms.Resize((args.img_size, args.img_size)))
-        test_transforms.append(transforms.Resize((args.img_size, args.img_size)))
+        if args.img_size != native_size:
+            train_transforms.append(transforms.Resize((args.img_size, args.img_size)))
+            test_transforms.append(transforms.Resize((args.img_size, args.img_size)))
 
-    if level in ("weak", "strong"):
-        train_transforms.extend([
-            transforms.RandomCrop(args.img_size, padding=4),
-            transforms.RandomHorizontalFlip(),
-        ])
+        if level in ("weak", "strong"):
+            train_transforms.extend([
+                transforms.RandomCrop(args.img_size, padding=4),
+                transforms.RandomHorizontalFlip(),
+            ])
 
     if level == "strong":
         train_transforms.append(transforms.RandAugment(num_ops=2, magnitude=9))
@@ -523,39 +650,49 @@ def _build_transforms(args, native_size: int):
     return transforms.Compose(train_transforms), transforms.Compose(test_transforms), level
 
 
-def _build_loaders(args, trainset, testset, level):
-    common_loader_kwargs = {
+def _loader_kwargs(args, persistent: bool = True):
+    kwargs = {
         "num_workers": args.num_workers,
         "pin_memory": True,
-        "persistent_workers": args.num_workers > 0,
+        "persistent_workers": persistent and args.num_workers > 0,
     }
     if args.num_workers > 0:
-        common_loader_kwargs["prefetch_factor"] = 4
+        kwargs["prefetch_factor"] = 4
+    return kwargs
+
+
+def _build_loaders(args, trainset, testset, level):
+    common_loader_kwargs = _loader_kwargs(args)
+    distributed = is_distributed()
 
     if level == "strong":
+        # RASampler는 분산 여부와 무관하게 쓰인다 (분산 시 rank별 슬라이스를 담당).
         sampler = RASampler(
             trainset,
             num_repeats=3,
             shuffle=True,
             batch_size=args.train_batch_size,
+            seed=getattr(args, "seed", 0),
         )
-        train_loader = DataLoader(
-            trainset,
-            batch_size=args.train_batch_size,
-            sampler=sampler,
-            **common_loader_kwargs,
-        )
+    elif distributed:
+        sampler = DistributedSampler(trainset, shuffle=True, drop_last=True)
     else:
-        train_loader = DataLoader(
-            trainset,
-            batch_size=args.train_batch_size,
-            shuffle=True,
-            **common_loader_kwargs,
-        )
+        sampler = None
+
+    train_loader = DataLoader(
+        trainset,
+        batch_size=args.train_batch_size,
+        sampler=sampler,
+        shuffle=(sampler is None),
+        # 분산 시 rank마다 스텝 수가 같아야 gradient all-reduce가 어긋나지 않는다.
+        drop_last=distributed,
+        **common_loader_kwargs,
+    )
 
     test_loader = DataLoader(
         testset,
         batch_size=args.test_batch_size,
+        sampler=UnpaddedDistributedSampler(testset) if distributed else None,
         shuffle=False,
         **common_loader_kwargs,
     )
@@ -585,18 +722,24 @@ def get_dataloader(args):
     Supported datasets:
       - cifar100
       - tiny-imagenet (or tiny_imagenet): expects {data_path}/tiny-imagenet-200/
+      - imagenet: full ImageNet-1K, expects {data_path}/imagenet/{train,val}/<wnid>/*.JPEG
       - imagenet-100: ResNet-50 F1 top-100 subset of ImageNet-1K
+
+    Under DDP the loaders are sharded per rank (see _build_loaders), and any download or
+    on-disk reorganization happens on rank 0 only.
     """
     dataset = args.dataset.replace("_", "-")
+    download = getattr(args, "download", True)
 
     if dataset == "cifar100":
         transform_train, transform_test, level = _build_transforms(args, native_size=32)
-        trainset = datasets.CIFAR100(
-            root=args.data_path, train=True, download=True, transform=transform_train,
-        )
-        testset = datasets.CIFAR100(
-            root=args.data_path, train=False, download=True, transform=transform_test,
-        )
+        with main_process_first():
+            trainset = datasets.CIFAR100(
+                root=args.data_path, train=True, download=download, transform=transform_train,
+            )
+            testset = datasets.CIFAR100(
+                root=args.data_path, train=False, download=download, transform=transform_test,
+            )
         return _build_loaders(args, trainset, testset, level)
 
     if dataset == "tiny-imagenet":
@@ -606,12 +749,32 @@ def get_dataloader(args):
                 f"got {args.num_classes}"
             )
 
-        root = prepare_tiny_imagenet(args.data_path)
+        with main_process_first():
+            root = prepare_tiny_imagenet(args.data_path)
         transform_train, transform_test, level = _build_transforms(
             args, native_size=TINY_IMAGENET_NATIVE_SIZE,
         )
         trainset = datasets.ImageFolder(root / "train", transform=transform_train)
         testset = datasets.ImageFolder(root / "val", transform=transform_test)
+        return _build_loaders(args, trainset, testset, level)
+
+    if dataset == "imagenet":
+        if args.num_classes != IMAGENET_NUM_CLASSES:
+            raise ValueError(
+                f"imagenet requires num_classes={IMAGENET_NUM_CLASSES}, got {args.num_classes}"
+            )
+
+        with main_process_first():
+            root = prepare_imagenet(
+                args.data_path, download_train=download, download_val=download,
+            )
+        transform_train, transform_test, level = _build_transforms(
+            args, native_size=IMAGENET_NATIVE_SIZE,
+        )
+        trainset = datasets.ImageFolder(root / "train", transform=transform_train)
+        testset = datasets.ImageFolder(root / "val", transform=transform_test)
+        if trainset.class_to_idx != testset.class_to_idx:
+            raise ValueError("Train/val class_to_idx mismatch; check ImageNet folder layout")
         return _build_loaders(args, trainset, testset, level)
 
     if dataset == "imagenet-100":
@@ -621,7 +784,10 @@ def get_dataloader(args):
                 f"got {args.num_classes}"
             )
 
-        root = prepare_imagenet(args.data_path)
+        with main_process_first():
+            root = prepare_imagenet(
+                args.data_path, download_train=download, download_val=download,
+            )
         train_dir = root / "train"
         val_dir = root / "val"
 
@@ -658,13 +824,7 @@ def make_subset_loader(args, train_loader, ratio):
     subset = Subset(dataset, indices)
 
     bs = args.train_batch_size
-    common_loader_kwargs = {
-        "num_workers": args.num_workers,
-        "pin_memory": True,
-        "persistent_workers": args.num_workers > 0,
-    }
-    if args.num_workers > 0:
-        common_loader_kwargs["prefetch_factor"] = 4
+    common_loader_kwargs = _loader_kwargs(args)
 
     if getattr(args, "augment", "none") == "strong":
         sampler = RASampler(subset, num_repeats=3, shuffle=True, batch_size=bs,)
@@ -681,7 +841,36 @@ def make_subset_loader(args, train_loader, ratio):
         **common_loader_kwargs,
     )
 
-# 굳이 이정도까지? 
+
+def build_train_eval_loader(args, train_loader, ratio: float):
+    """
+    Loader used to report *train* accuracy during training.
+
+    ratio >= 1.0 scores the whole training set, which is what the CIFAR-100 / Tiny
+    ImageNet runs did. On ImageNet that is an entire extra pass over 1.28M images per
+    evaluation, so a fixed random subset is scored instead. The subset is drawn once from
+    a fixed seed (identical on every rank) and keeps the training transform, so the number
+    stays comparable across epochs and means the same thing as before.
+    """
+    if ratio >= 1.0:
+        return train_loader
+
+    dataset = train_loader.dataset
+    n = max(1, int(len(dataset) * ratio))
+    rng = np.random.default_rng(getattr(args, "seed", 0))
+    indices = np.sort(rng.choice(len(dataset), n, replace=False)).tolist()
+    subset = Subset(dataset, indices)
+
+    return DataLoader(
+        subset,
+        batch_size=args.test_batch_size,
+        sampler=UnpaddedDistributedSampler(subset) if is_distributed() else None,
+        shuffle=False,
+        **_loader_kwargs(args, persistent=False),
+    )
+
+
+# 굳이 이정도까지?
 # def get_dataloader_with_subset(args, ratio):
 #     """
 #     Convenience: get_dataloader(args) + make_subset_loader on train.

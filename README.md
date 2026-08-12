@@ -140,7 +140,8 @@ models/
 config/              base.yaml + one file per token mixer
 utils/
   config.py          argparse + YAML layering (base -> model -> CLI)
-  dataset.py         CIFAR-100 / Tiny ImageNet / ImageNet-100, DeiT augmentation
+  dataset.py         CIFAR-100 / Tiny ImageNet / ImageNet-1k / ImageNet-100, DeiT augmentation
+  distributed.py     torchrun/DDP helpers (no-ops in a single-process run)
   build_model.py     rebuild a model from a saved run and load its checkpoint
 analysis/            ERF/ERD, CKA, Hessian spectrum, and their plotting scripts
 experimental/        explored but not in the report — see experimental/README.md
@@ -207,7 +208,41 @@ Each run writes to `output/{project}/{run_name}-{timestamp}/`:
 | `config.yaml` | the fully resolved config — this is what the analysis pipeline reads back |
 | `best.pt` | best checkpoint by validation accuracy |
 | `epoch_warmup_end.pt` | checkpoint at the end of warmup |
-| `epoch_{100,200,...}.pt` | periodic checkpoints |
+| `epoch_{100,200,...}.pt` | periodic checkpoints (`--ckpt_interval`) |
+| `last.pt` | full training state (weights, optimizer, scheduler, epoch) for `--resume` |
+
+### Multi-GPU
+
+Launch with `torchrun` and drop `--device_type` — each rank takes its GPU from
+`LOCAL_RANK`. `--train_batch_size` is then the **per-GPU** batch, so scale the learning
+rate with the global batch (`world_size × train_batch_size`).
+
+```bash
+torchrun --standalone --nproc_per_node=8 train.py \
+    --base_config config/base_imagenet.yaml --config config/vit.yaml --run_name vit
+```
+
+`--resume auto` continues the newest run of the same name under
+`output/{project}/{run_name}-*`, so a preempted job can be resubmitted unchanged.
+
+### ImageNet-1k
+
+`config/base_imagenet.yaml` + `run_imagenet.sh` run the same five token mixers on full
+ImageNet-1k. The model is unchanged — the CIFAR-100 runs already train at 224×224 with
+patch 16 — only the data pipeline and the schedule differ:
+
+- `crop_style: imagenet` switches to `RandomResizedCrop` (train) and `Resize` +
+  `CenterCrop` (test). This is required, not cosmetic: ImageNet JPEGs have varying
+  resolutions, so the CIFAR-style `Resize`-then-`RandomCrop` pipeline cannot batch the
+  test set at all and gives no scale augmentation at train time.
+- `train_eval_ratio: 0.02` — reporting train accuracy over the full 1.28M-image training
+  set would cost an extra pass per evaluation.
+- 300 epochs, per-GPU batch 128 (global 1024 on 8 GPUs), bf16 autocast.
+
+The dataset is **not** downloaded: image-net.org needs an account. Stage it yourself as
+`{data_path}/imagenet/{train,val}/<wnid>/*.JPEG` (a cached `ILSVRC2012_img_*.tar` under
+`{data_path}/imagenet/archives/` is also enough — the loader extracts it and sorts the
+validation images into wnid folders).
 
 Reported setting: `embed_dim` 192, `depth` 12, patch 16 at 224×224, AdamW at 6.67e-4,
 batch 512, cosine schedule with 20 warmup epochs, 1000 epochs, DeiT-style augmentation
