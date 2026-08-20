@@ -2,6 +2,7 @@ import json
 import random
 import tarfile
 import zipfile
+from collections import OrderedDict
 from pathlib import Path
 from urllib.request import urlopen, urlretrieve
 
@@ -573,6 +574,48 @@ class ClassSubsetDataset(Dataset):
         return image, self.class_to_new[target]
 
 
+class RepeatCachedImageFolder(datasets.ImageFolder):
+    """
+    Repeated augmentation 이 켜졌을 때 같은 이미지를 반복해서 디코드하지 않는 ImageFolder.
+
+    RASampler 는 같은 인덱스를 num_repeats 번 연속으로 내보내고, DataLoader 는 배치 하나를
+    통째로 워커 하나에 맡긴다. 따라서 한 워커가 같은 JPEG 을 연속으로 num_repeats 번 디코드하게
+    되는데, 원본 해상도 ImageNet 에서는 디코드가 입력 파이프라인에서 가장 비싼 단계라
+    그 반복이 그대로 CPU 낭비가 된다 (측정: GPU 활용률 ~58%, 디코드 병목).
+
+    캐시에 담는 것은 디코드 결과(PIL 이미지)뿐이고 transform 은 호출마다 새로 적용하므로,
+    증강의 무작위성과 학습 의미는 캐시가 없을 때와 완전히 동일하다.
+    """
+
+    def __init__(self, root, transform=None, target_transform=None, cache_size: int = 0):
+        super().__init__(root, transform=transform, target_transform=target_transform)
+        self.cache_size = cache_size
+        self._cache = OrderedDict()
+
+    def __getitem__(self, index: int):
+        if self.cache_size <= 0:
+            return super().__getitem__(index)
+
+        path, target = self.samples[index]
+        image = self._cache.get(index)
+        if image is None:
+            image = self.loader(path)
+            self._cache[index] = image
+            if len(self._cache) > self.cache_size:
+                self._cache.popitem(last=False)
+
+        if self.transform is not None:
+            image = self.transform(image)
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+        return image, target
+
+
+def _decode_cache_size(level: str) -> int:
+    """RA 가 켜지는 strong 레벨에서만 캐시를 쓴다 (반복본이 배치 안에 연속으로 들어오는 경우)."""
+    return 4 if level == "strong" else 0
+
+
 def _resolve_crop_style(args, native_size: int) -> str:
     """cifar | imagenet — see --crop_style. 'auto' keys off the dataset's native size."""
     style = getattr(args, "crop_style", "auto")
@@ -754,7 +797,8 @@ def get_dataloader(args):
         transform_train, transform_test, level = _build_transforms(
             args, native_size=TINY_IMAGENET_NATIVE_SIZE,
         )
-        trainset = datasets.ImageFolder(root / "train", transform=transform_train)
+        trainset = RepeatCachedImageFolder(root / "train", transform=transform_train,
+                                          cache_size=_decode_cache_size(level))
         testset = datasets.ImageFolder(root / "val", transform=transform_test)
         return _build_loaders(args, trainset, testset, level)
 
@@ -771,7 +815,8 @@ def get_dataloader(args):
         transform_train, transform_test, level = _build_transforms(
             args, native_size=IMAGENET_NATIVE_SIZE,
         )
-        trainset = datasets.ImageFolder(root / "train", transform=transform_train)
+        trainset = RepeatCachedImageFolder(root / "train", transform=transform_train,
+                                          cache_size=_decode_cache_size(level))
         testset = datasets.ImageFolder(root / "val", transform=transform_test)
         if trainset.class_to_idx != testset.class_to_idx:
             raise ValueError("Train/val class_to_idx mismatch; check ImageNet folder layout")
@@ -800,7 +845,8 @@ def get_dataloader(args):
         transform_train, transform_test, level = _build_transforms(
             args, native_size=IMAGENET_NATIVE_SIZE,
         )
-        train_base = datasets.ImageFolder(train_dir, transform=transform_train)
+        train_base = RepeatCachedImageFolder(train_dir, transform=transform_train,
+                                             cache_size=_decode_cache_size(level))
         test_base = datasets.ImageFolder(val_dir, transform=transform_test)
         if train_base.class_to_idx != test_base.class_to_idx:
             raise ValueError("Train/val class_to_idx mismatch; check ImageNet folder layout")
