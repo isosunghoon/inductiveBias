@@ -17,7 +17,7 @@ class Attention(nn.Module):
         self.scale = head_dim ** -0.5
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
+        self.attn_drop_p = attn_drop
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
@@ -32,11 +32,13 @@ class Attention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
 
-        attn = (q * self.scale) @ k.transpose(-2, -1)
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        # softmax(QK^T/sqrt(d))V 를 그대로 계산하되, [B, heads, N, N] 점수 행렬을 HBM 에
+        # 만들지 않는 융합 커널(FlashAttention 계열)에 맡긴다. 수식은 동일하고 부동소수점
+        # 누적 순서만 달라진다.
+        x = F.scaled_dot_product_attention(
+            q, k, v, dropout_p=self.attn_drop_p if self.training else 0.0,
+        )
+        x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         if len(shape) == 4:
@@ -63,7 +65,7 @@ class ConvAttention(nn.Module):
         self.window_size = window_size
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
+        self.attn_drop_p = attn_drop
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
@@ -101,18 +103,18 @@ class ConvAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         
-        attn = (q*self.scale) @ k.transpose(-2, -1)
-
-        # apply masking right before softmax operation
         if self._cached_mask is None or self._cached_hw != (H, W) or self._cached_mask.device != x.device:
             self._cached_mask = self.make_local_mask(H, W, self.window_size, x.device)
             self._cached_hw = (H, W)
-        attn = attn.masked_fill(~self._cached_mask[None, None, :, :], float("-inf"))
 
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        x = (attn @ v).transpose(1,2).reshape(B, N, C)
+        # SDPA 의 bool attn_mask 는 True = 어텐션에 참여로, make_local_mask 의 의미와 같다.
+        # 마스크가 있으면 flash 대신 memory-efficient 백엔드가 쓰이지만, 그래도
+        # [B, heads, N, N] 을 직접 만들던 기존 구현보다 메모리 트래픽이 훨씬 적다.
+        x = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=self._cached_mask[None, None, :, :],
+            dropout_p=self.attn_drop_p if self.training else 0.0,
+        )
+        x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         x = x.transpose(-2, -1).reshape(B, C, H, W)

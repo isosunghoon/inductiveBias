@@ -51,6 +51,13 @@ def amp_dtype(args):
     return torch.bfloat16 if getattr(args, "amp_dtype", "float16") == "bfloat16" else torch.float16
 
 
+def to_device(args, x):
+    """Move a batch to the training device, in NHWC when channels_last is on."""
+    if getattr(args, "channels_last", False):
+        return x.to(args.device, non_blocking=True, memory_format=torch.channels_last)
+    return x.to(args.device, non_blocking=True)
+
+
 def setup(args):
     if not args.no_wandb and is_main_process():
         wandb.define_metric("epoch")
@@ -113,6 +120,8 @@ def setup(args):
             raise ValueError(f"Unsupported non-MetaFormer model: {args.model}")
 
     model.to(args.device)
+    if getattr(args, "channels_last", False):
+        model = model.to(memory_format=torch.channels_last)
 
     # DDP first, then torch.compile: compiling the wrapped module lets DDPOptimizer split
     # the graph at the gradient-bucket boundaries so communication overlaps with backward.
@@ -257,7 +266,7 @@ def train(args, model, run=None, resume_path=None):
         epoch_steps = 0
         for step, batch in enumerate(epoch_iterator):
             x, y = batch
-            x = x.to(args.device, non_blocking=True)
+            x = to_device(args, x)
             y = y.to(args.device, non_blocking=True)
 
             if mixup_fn is not None:
@@ -352,7 +361,7 @@ def validate(args, model, data_loader):
 
     with torch.no_grad():
         for x, y in data_loader:
-            x = x.to(args.device, non_blocking=True)
+            x = to_device(args, x)
             y = y.to(args.device, non_blocking=True)
 
             with torch.amp.autocast('cuda', enabled=args.fp16, dtype=amp_dtype(args)):

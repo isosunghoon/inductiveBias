@@ -93,6 +93,11 @@ def get_parser():
     parser.add_argument("--compile", type=lambda x: str(x).lower() in ("true", "1", "yes"),
                         nargs="?", const=True, default=True,
                         help="wrap the model in torch.compile (--compile false to debug or on CPU)")
+    parser.add_argument("--channels_last", type=lambda x: str(x).lower() in ("true", "1", "yes"),
+                        nargs="?", const=True, default=True,
+                        help="hold activations in NHWC. The model is [B, C, H, W] end to end, so this makes "
+                             "the flatten+transpose into token sequences a free view instead of a copy, and "
+                             "lets cuDNN pick its fast kernels for the 1x1-conv channel mixer.")
     parser.add_argument("--data_path", type=str, default="./data", help="path to dataset root directory")
     parser.add_argument("--download", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=True,
                         help="allow the dataset loader to download/extract the dataset when it is missing. "
