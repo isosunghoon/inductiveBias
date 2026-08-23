@@ -1,4 +1,5 @@
 import json
+import math
 import random
 import tarfile
 import zipfile
@@ -675,6 +676,14 @@ def _build_transforms(args, native_size: int):
     if level == "strong":
         train_transforms.append(transforms.RandAugment(num_ops=2, magnitude=9))
 
+    # --gpu_transform: float 변환/정규화/RandomErasing 을 GPU 배치 연산으로 넘긴다.
+    # 워커는 uint8 텐서까지만 만들므로 CPU 부하가 절반 이하로 줄고, 호스트→디바이스
+    # 전송량도 1/4 이 된다. 나머지는 build_gpu_post_transform() 이 처리한다.
+    if getattr(args, "gpu_transform", False):
+        train_transforms.append(transforms.PILToTensor())
+        test_transforms.append(transforms.PILToTensor())
+        return transforms.Compose(train_transforms), transforms.Compose(test_transforms), level
+
     train_transforms.extend([
         transforms.ToTensor(),
         transforms.Normalize(norm_mean, norm_std),
@@ -691,6 +700,90 @@ def _build_transforms(args, native_size: int):
     ])
 
     return transforms.Compose(train_transforms), transforms.Compose(test_transforms), level
+
+
+class GPUPostTransform:
+    """uint8 배치를 받아 float 변환 → 정규화 → (학습 시) RandomErasing 을 GPU 에서 수행.
+
+    CPU 경로와의 관계
+      - float/255 과 (x-mean)/std 는 결정적 원소별 산술이라 ToTensor+Normalize 와
+        **수식이 같다**. 부동소수점 연산 순서도 동일해 값이 일치한다.
+      - RandomErasing 은 torchvision 과 같은 알고리즘·같은 분포를 배치로 벡터화한
+        것이다. 난수 스트림이 워커에서 메인 프로세스로 옮겨지므로 개별 표본은
+        달라지지만, 확률 분포는 동일하다(랜덤 증강이므로 계통 차이가 아니다).
+    """
+
+    def __init__(self, mean, std, erasing: bool, p: float = 0.25,
+                 scale=(0.02, 0.33), ratio=(0.3, 3.3), channels_last: bool = False):
+        self.mean = torch.tensor(mean).view(1, -1, 1, 1)
+        self.std = torch.tensor(std).view(1, -1, 1, 1)
+        self.erasing = erasing
+        self.p = p
+        self.scale = scale
+        self.ratio = ratio
+        self.channels_last = channels_last
+        self._device = None
+
+    def _sync(self, device):
+        if self._device != device:
+            self.mean = self.mean.to(device)
+            self.std = self.std.to(device)
+            self._device = device
+
+    def _erase(self, x):
+        """torchvision RandomErasing.get_params 의 '10회 시도' 규칙을 배치로 재현."""
+        B, _, H, W = x.shape
+        dev = x.device
+        area = float(H * W)
+        lo, hi = math.log(self.ratio[0]), math.log(self.ratio[1])
+
+        h = torch.zeros(B, dtype=torch.long, device=dev)
+        w = torch.zeros(B, dtype=torch.long, device=dev)
+        ok = torch.zeros(B, dtype=torch.bool, device=dev)
+        for _ in range(10):
+            erase_area = area * torch.empty(B, device=dev).uniform_(self.scale[0], self.scale[1])
+            aspect = torch.exp(torch.empty(B, device=dev).uniform_(lo, hi))
+            hh = torch.round(torch.sqrt(erase_area * aspect)).long()
+            ww = torch.round(torch.sqrt(erase_area / aspect)).long()
+            valid = (~ok) & (hh > 0) & (ww > 0) & (hh < H) & (ww < W)
+            h = torch.where(valid, hh, h)
+            w = torch.where(valid, ww, w)
+            ok |= valid
+
+        do = (torch.rand(B, device=dev) < self.p) & ok
+        i = (torch.rand(B, device=dev) * (H - h + 1).float()).long()
+        j = (torch.rand(B, device=dev) * (W - w + 1).float()).long()
+
+        rows = torch.arange(H, device=dev).view(1, 1, H, 1)
+        cols = torch.arange(W, device=dev).view(1, 1, 1, W)
+        iv, jv = i.view(B, 1, 1, 1), j.view(B, 1, 1, 1)
+        hv, wv = h.view(B, 1, 1, 1), w.view(B, 1, 1, 1)
+        mask = (rows >= iv) & (rows < iv + hv) & (cols >= jv) & (cols < jv + wv)
+        mask &= do.view(B, 1, 1, 1)
+        return torch.where(mask, torch.randn_like(x), x)
+
+    def __call__(self, x, training: bool = False):
+        if x.dtype != torch.uint8:      # gpu_transform 이 꺼진 경로는 그대로 통과
+            return x
+        self._sync(x.device)
+        x = x.float().div_(255).sub_(self.mean).div_(self.std)
+        if training and self.erasing:
+            x = self._erase(x)
+        if self.channels_last:
+            x = x.contiguous(memory_format=torch.channels_last)
+        return x
+
+
+def build_gpu_post_transform(args):
+    """--gpu_transform 이 켜져 있을 때 CPU 파이프라인에서 떼어낸 뒷단을 만든다."""
+    if not getattr(args, "gpu_transform", False):
+        return None
+    norm_mean, norm_std = NORM_TABLE[getattr(args, "norm_type", "cifar100")]
+    return GPUPostTransform(
+        norm_mean, norm_std,
+        erasing=(getattr(args, "augment", "none") == "strong"),
+        channels_last=getattr(args, "channels_last", False),
+    )
 
 
 def _loader_kwargs(args, persistent: bool = True):

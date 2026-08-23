@@ -11,7 +11,7 @@ import models.norm_layers as NL
 import models.pretrained_vit as PV
 
 from utils.config import parse_args, resolve_runtime_device
-from utils.dataset import build_train_eval_loader, get_dataloader
+from utils.dataset import build_gpu_post_transform, build_train_eval_loader, get_dataloader
 from utils.distributed import (
     all_reduce_sum,
     broadcast_object,
@@ -51,8 +51,15 @@ def amp_dtype(args):
     return torch.bfloat16 if getattr(args, "amp_dtype", "float16") == "bfloat16" else torch.float16
 
 
-def to_device(args, x):
-    """Move a batch to the training device, in NHWC when channels_last is on."""
+def to_device(args, x, training: bool = False):
+    """Move a batch to the training device, in NHWC when channels_last is on.
+
+    With --gpu_transform the workers hand over uint8, so the float conversion,
+    normalization and RandomErasing happen here, on device, in one batched pass.
+    """
+    post = getattr(args, "_gpu_post", None)
+    if post is not None and x.dtype == torch.uint8:
+        return post(x.to(args.device, non_blocking=True), training=training)
     if getattr(args, "channels_last", False):
         return x.to(args.device, non_blocking=True, memory_format=torch.channels_last)
     return x.to(args.device, non_blocking=True)
@@ -212,6 +219,7 @@ def resolve_resume_path(args, run_name):
 
 def train(args, model, run=None, resume_path=None):
     # prepare dataset
+    args._gpu_post = build_gpu_post_transform(args)
     train_loader, test_loader, mixup_fn = get_dataloader(args)
     train_eval_loader = build_train_eval_loader(args, train_loader, args.train_eval_ratio)
 
@@ -266,7 +274,7 @@ def train(args, model, run=None, resume_path=None):
         epoch_steps = 0
         for step, batch in enumerate(epoch_iterator):
             x, y = batch
-            x = to_device(args, x)
+            x = to_device(args, x, training=True)
             y = y.to(args.device, non_blocking=True)
 
             if mixup_fn is not None:
@@ -386,7 +394,9 @@ _RUNTIME_ONLY_KEYS = {"device", "distributed", "rank", "world_size", "local_rank
 def build_wandb_config(args):
     """Build a serializable config dict from args (before setup() mutates class fields)."""
     exclude = {"config", "device"}
-    return {k: v for k, v in vars(args).items() if k not in exclude}
+    # 밑줄로 시작하는 키는 런타임 객체(예: _gpu_post)라 직렬화 대상이 아니다.
+    return {k: v for k, v in vars(args).items()
+            if k not in exclude and not k.startswith("_")}
 
 def main():
     args = parse_args()
@@ -424,7 +434,8 @@ def main():
     # Save only device_type (runtime device string is reconstructed at execution time).
     if is_main_process():
         config_path = os.path.join(run_dir, "config.yaml")
-        config_to_save = {k: v for k, v in vars(args).items() if k not in _RUNTIME_ONLY_KEYS}
+        config_to_save = {k: v for k, v in vars(args).items()
+                          if k not in _RUNTIME_ONLY_KEYS and not k.startswith("_")}
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(config_to_save, f, sort_keys=False, allow_unicode=True)
         print(f"[Config] Full training config saved to {config_path}")

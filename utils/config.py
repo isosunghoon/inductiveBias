@@ -50,6 +50,10 @@ def get_parser():
     parser.add_argument("--augment", type=str, default="none",
                         choices=["none", "weak", "strong"],
                         help="augmentation level: none | weak (crop+flip) | strong (weak + RandAugment + RandomErasing + Mixup + CutMix + RepeatedAug)")
+    parser.add_argument("--gpu_transform", nargs="?", const=True, default=False,
+                        type=lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes"),
+                        help="move float/normalize/RandomErasing off the dataloader workers onto the GPU "
+                             "(workers emit uint8; halves CPU cost and cuts H2D traffic 4x)")
     parser.add_argument("--norm_type", type=str, default="cifar100",
                         choices=["cifar100", "imagenet", "inception"],
                         help="input normalization scheme: cifar100 | imagenet | inception (mean=std=0.5, used by Google JAX ViT .npz checkpoints)")
