@@ -1,0 +1,9 @@
+panel,model,N,d,regime,nstar,method
+P0,tied,6,48,onestep,44.2097,interp
+P0,tied,8,48,onestep,90.7453,interp
+P0,tied,12,48,onestep,179.544,interp
+P0,tied,16,48,onestep,287.275,interp
+P0,untied,6,48,onestep,321.142,interp
+P0,untied,8,48,onestep,649.629,interp
+P0,untied,12,48,onestep,2090.87,interp
+P0,untied,16,48,onestep,4598.31,interp

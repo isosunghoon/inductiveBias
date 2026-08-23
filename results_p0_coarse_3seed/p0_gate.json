@@ -1,0 +1,65 @@
+{
+  "pass": false,
+  "cells": {
+    "tied,N=6": {
+      "base": 46,
+      "measured": 44.20973801964948,
+      "ok": true
+    },
+    "tied,N=8": {
+      "base": 64,
+      "measured": 90.74529381306016,
+      "ok": false
+    },
+    "tied,N=12": {
+      "base": 150,
+      "measured": 179.5436393967759,
+      "ok": true
+    },
+    "tied,N=16": {
+      "base": 281,
+      "measured": 287.2748880459382,
+      "ok": true
+    },
+    "untied,N=6": {
+      "base": 305,
+      "measured": 321.1421795275102,
+      "ok": true
+    },
+    "untied,N=8": {
+      "base": 684,
+      "measured": 649.6291254093102,
+      "ok": true
+    },
+    "untied,N=12": {
+      "base": 2059,
+      "measured": 2090.8651531319692,
+      "ok": true
+    },
+    "untied,N=16": {
+      "base": 4388,
+      "measured": 4598.307082112267,
+      "ok": true
+    }
+  },
+  "slopes": {
+    "tied": {
+      "slope": 1.8752112178895146,
+      "stderr": 0.13011626123245987,
+      "range": [
+        1.7,
+        2.1
+      ],
+      "ok": true
+    },
+    "untied": {
+      "slope": 2.738298839928681,
+      "stderr": 0.05777953168332957,
+      "range": [
+        2.5,
+        2.9
+      ],
+      "ok": true
+    }
+  }
+}

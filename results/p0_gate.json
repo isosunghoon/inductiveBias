@@ -1,0 +1,67 @@
+{
+  "pass": true,
+  "seeds": 20,
+  "ratio": 1.189207115,
+  "cells": {
+    "tied,N=6": {
+      "base": 46,
+      "measured": 51.222094512707564,
+      "ok": true
+    },
+    "tied,N=8": {
+      "base": 64,
+      "measured": 82.49266001294791,
+      "ok": true
+    },
+    "tied,N=12": {
+      "base": 150,
+      "measured": 171.67231549010106,
+      "ok": true
+    },
+    "tied,N=16": {
+      "base": 281,
+      "measured": 291.9550540935136,
+      "ok": true
+    },
+    "untied,N=6": {
+      "base": 305,
+      "measured": 315.2461996126394,
+      "ok": true
+    },
+    "untied,N=8": {
+      "base": 684,
+      "measured": 692.0710915329832,
+      "ok": true
+    },
+    "untied,N=12": {
+      "base": 2059,
+      "measured": 2080.300016359768,
+      "ok": true
+    },
+    "untied,N=16": {
+      "base": 4388,
+      "measured": 4577.517204996646,
+      "ok": true
+    }
+  },
+  "slopes": {
+    "tied": {
+      "slope": 1.7792705342373418,
+      "stderr": 0.026957041412470267,
+      "range": [
+        1.7,
+        2.1
+      ],
+      "ok": true
+    },
+    "untied": {
+      "slope": 2.725883942714467,
+      "stderr": 0.0035396738197540517,
+      "range": [
+        2.5,
+        2.9
+      ],
+      "ok": true
+    }
+  }
+}
